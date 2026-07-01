@@ -50,10 +50,10 @@ describe("adjustable_interval — steady rate", () => {
 
 	test("emits one void tick per interval", async () => {
 		const count = await run(function* () {
-			const interval = adjustable_interval(20);
+			const a_i = adjustable_interval(20);
 			let ticks = 0;
 			const consumer = yield* spawn(function* () {
-				for (const value of yield* each(interval)) {
+				for (const value of yield* each(a_i)) {
 					expect(value).toBeUndefined(); // ticks carry no payload
 					ticks += 1;
 					if (ticks >= 3) {
@@ -73,9 +73,9 @@ describe("adjustable_interval — steady rate", () => {
 			// The tightest consumer possible against the fastest interval allowed: if
 			// next() ever returned without yielding to the reducer, the sleep below
 			// would never resume and this test would hang.
-			const interval = adjustable_interval(1);
+			const a_i = adjustable_interval(1);
 			yield* spawn(function* () {
-				for (const _ of yield* each(interval)) {
+				for (const _ of yield* each(a_i)) {
 					yield* each.next();
 				}
 			});
@@ -103,15 +103,15 @@ describe("adjustable_interval — steady rate", () => {
 // changing the rate
 // ----------------------------------------------------------------------------
 
-describe("adjustable_interval — set_interval", () => {
+describe("adjustable_interval — set interval", () => {
 	test("speeding up an in-flight wait fires sooner than the old interval", async () => {
 		await run(function* () {
 			const start = performance.now();
-			const interval = adjustable_interval(1000); // a long first wait...
-			const at = yield* record_ticks(interval, start);
+			const a_i = adjustable_interval(1000); // a long first wait...
+			const at = yield* record_ticks(a_i, start);
 			yield* sleep(30);
 			expect(at.length).toBe(0); // nothing yet, still deep inside the 1000ms wait
-			interval.set_interval(60); // ...retimed to fire at last(0) + 60ms
+			a_i.interval = 60; // ...retimed to fire at last(0) + 60ms
 			yield* sleep(80); // well past 60ms, nowhere near 1000ms
 			expect(at.length).toBeGreaterThanOrEqual(1);
 		});
@@ -120,10 +120,10 @@ describe("adjustable_interval — set_interval", () => {
 	test("dropping the interval below elapsed time fires immediately", async () => {
 		await run(function* () {
 			const start = performance.now();
-			const interval = adjustable_interval(1000);
-			const at = yield* record_ticks(interval, start);
+			const a_i = adjustable_interval(1000);
+			const at = yield* record_ticks(a_i, start);
 			yield* sleep(50); // 50ms into the wait
-			interval.set_interval(10); // due time (last + 10 = 10ms) is already in the past
+			a_i.interval = 10; // due time (last + 10 = 10ms) is already in the past
 			yield* sleep(20);
 			expect(at.length).toBeGreaterThanOrEqual(1);
 			expect(at[0]!).toBeLessThan(120); // fired promptly, not at ~1000ms
@@ -133,23 +133,23 @@ describe("adjustable_interval — set_interval", () => {
 	test("slowing down stretches the spacing of later ticks", async () => {
 		await run(function* () {
 			const start = performance.now();
-			const interval = adjustable_interval(30);
-			const at = yield* record_ticks(interval, start);
+			const a_i = adjustable_interval(30);
+			const at = yield* record_ticks(a_i, start);
 			yield* sleep(80); // a couple of fast ticks land
 			const fast_count = at.length;
 			expect(fast_count).toBeGreaterThanOrEqual(2);
-			interval.set_interval(500); // throttle way down
+			a_i.interval = 500; // throttle way down
 			yield* sleep(120); // less than one slow interval
 			// At most one more tick (the one already in flight when we retimed).
 			expect(at.length - fast_count).toBeLessThanOrEqual(1);
 		});
 	});
 
-	test("interval_ms reflects the latest value", () => {
-		const interval = adjustable_interval(100);
-		expect(interval.interval_ms).toBe(100);
-		interval.set_interval(250);
-		expect(interval.interval_ms).toBe(250);
+	test("interval reflects the latest value", () => {
+		const a_i = adjustable_interval(100);
+		expect(a_i.interval).toBe(100);
+		a_i.interval = 250;
+		expect(a_i.interval).toBe(250);
 	});
 });
 
@@ -174,23 +174,23 @@ describe("adjustable_interval — validation", () => {
 	});
 
 	test("accepts a fractional interval >= 1ms (e.g. from division)", () => {
-		expect(adjustable_interval(125 / 2).interval_ms).toBe(62.5); // truncated by the timer, not rejected
-		expect(adjustable_interval(1.5).interval_ms).toBe(1.5);
+		expect(adjustable_interval(125 / 2).interval).toBe(62.5); // truncated by the timer, not rejected
+		expect(adjustable_interval(1.5).interval).toBe(1.5);
 	});
 
 	test("rejects an interval larger than the max timer delay", () => {
 		expect(() => adjustable_interval(2_147_483_648)).toThrow(/number of milliseconds/);
-		expect(adjustable_interval(2_147_483_647).interval_ms).toBe(2_147_483_647); // the boundary is allowed
+		expect(adjustable_interval(2_147_483_647).interval).toBe(2_147_483_647); // the boundary is allowed
 	});
 
-	test("rejects a bad value passed to set_interval", () => {
-		const interval = adjustable_interval(100);
-		expect(() => interval.set_interval(-5)).toThrow(/number of milliseconds/);
-		expect(() => interval.set_interval(0)).toThrow(/number of milliseconds/);
-		expect(() => interval.set_interval(0.5)).toThrow(/number of milliseconds/);
-		expect(() => interval.set_interval(NaN)).toThrow(/number of milliseconds/);
-		expect(interval.interval_ms).toBe(100); // unchanged after a rejected update
-		interval.set_interval(62.5); // fractional >= 1 is accepted
-		expect(interval.interval_ms).toBe(62.5);
+	test("rejects a bad value passed to interval", () => {
+		const a_i = adjustable_interval(100);
+		expect(() => { a_i.interval = -5; }).toThrow(/number of milliseconds/);
+		expect(() => { a_i.interval = 0; }).toThrow(/number of milliseconds/);
+		expect(() => { a_i.interval = 0.5; }).toThrow(/number of milliseconds/);
+		expect(() => { a_i.interval = NaN; }).toThrow(/number of milliseconds/);
+		expect(a_i.interval).toBe(100); // unchanged after a rejected update
+		a_i.interval = 62.5; // fractional >= 1 is accepted
+		expect(a_i.interval).toBe(62.5);
 	});
 });

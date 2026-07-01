@@ -22,14 +22,12 @@ import type { Operation, Stream } from "effection";
  */
 export interface AdjustableInterval extends Stream<void, never> {
 	/**
-	 * Change the spacing between ticks, in milliseconds. Takes effect at once: a
-	 * subscription that is currently waiting reschedules its pending tick to
+	 * Get or set the spacing between ticks, in milliseconds. Takes effect at once:
+	 * a subscription that is currently waiting reschedules its pending tick to
 	 * `<time it last ticked> + ms`, which fires immediately if that moment has
 	 * already passed. Must be a number of milliseconds from 1 to 2147483647.
 	 */
-	set_interval(ms: number): void;
-	/** The current spacing between ticks, in milliseconds. */
-	readonly interval_ms: number;
+	interval: number;
 }
 
 /** A one-shot callback that wakes a subscription blocked on an interval change. */
@@ -131,13 +129,13 @@ function wait_for_interval_change(
  * slow to pull never triggers a catch-up burst; the effective rate simply can't
  * exceed how fast the consumer pulls.
  *
- * @param interval_ms - the initial spacing between ticks; a number of
- *                       milliseconds from 1 to 2147483647.
+ * @param interval - the initial spacing between ticks; a number of
+ *                   milliseconds from 1 to 2147483647.
  * @returns a ticker you can subscribe to and retime with `set_interval`.
  */
-export function adjustable_interval(interval_ms: number): AdjustableInterval {
-	assert_valid_interval(interval_ms);
-	let current = interval_ms;
+export function adjustable_interval(interval: number): AdjustableInterval {
+	assert_valid_interval(interval);
+	let current = interval;
 	// Bumped on every change. A waiter records the revision it saw before it slept
 	// and wakes when the revision moves. This coalesces redundant changes — a
 	// burst of set_interval calls between two pulls just leaves one higher number
@@ -148,11 +146,11 @@ export function adjustable_interval(interval_ms: number): AdjustableInterval {
 	const waiters = new Set<Wake>();
 
 	return {
-		get interval_ms() {
+		get interval() {
 			return current;
 		},
 
-		set_interval(ms: number): void {
+		set interval(ms: number) {
 			assert_valid_interval(ms);
 			if (ms === current) {
 				return;
