@@ -12,7 +12,7 @@ import type { Operation, Stream } from "effection";
 /**
  * A {@link Stream} of evenly-spaced ticks whose spacing can be changed while it
  * is running. Consume it like any other stream — `for (const _ of yield*
- * each(ticker))` — and call {@link Ticker.set_interval} from anywhere, including
+ * each(ticker))` — and call `set_interval` from anywhere, including
  * outside any operation, to make the ticks faster or slower.
  *
  * Ticks carry no value (`void`): the stream exists purely for its timing. Each
@@ -20,7 +20,7 @@ import type { Operation, Stream } from "effection";
  * last fired, but every subscription reads the one shared interval, so a single
  * `set_interval` call retimes them all.
  */
-export interface Ticker extends Stream<void, never> {
+export interface AdjustableInterval extends Stream<void, never> {
 	/**
 	 * Change the spacing between ticks, in milliseconds. Takes effect at once: a
 	 * subscription that is currently waiting reschedules its pending tick to
@@ -123,7 +123,7 @@ function wait_for_interval_change(
 }
 
 /**
- * Create a {@link Ticker}: a rate-controllable stream of ticks.
+ * Create a {@link AdjustableInterval}: a rate-controllable stream of ticks.
  *
  * The first tick of a subscription fires one interval after it subscribes, and
  * subsequent ticks are spaced by the current interval — measured from when the
@@ -135,7 +135,7 @@ function wait_for_interval_change(
  *                       milliseconds from 1 to 2147483647.
  * @returns a ticker you can subscribe to and retime with `set_interval`.
  */
-export function create_ticker(interval_ms: number): Ticker {
+export function adjustable_interval(interval_ms: number): AdjustableInterval {
 	assert_valid_interval(interval_ms);
 	let current = interval_ms;
 	// Bumped on every change. A waiter records the revision it saw before it slept
