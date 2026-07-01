@@ -25,7 +25,7 @@ export interface Ticker extends Stream<void, never> {
 	 * Change the spacing between ticks, in milliseconds. Takes effect at once: a
 	 * subscription that is currently waiting reschedules its pending tick to
 	 * `<time it last ticked> + ms`, which fires immediately if that moment has
-	 * already passed. Must be a finite number `> 0`.
+	 * already passed. Must be a number of milliseconds from 1 to 2147483647.
 	 */
 	set_interval(ms: number): void;
 	/** The current spacing between ticks, in milliseconds. */
@@ -35,18 +35,36 @@ export interface Ticker extends Stream<void, never> {
 /** A one-shot callback that wakes a subscription blocked on an interval change. */
 type Wake = () => void;
 
+// Bounds of a sleep the Node timer backend honors faithfully. Below 1ms it
+// clamps up to 1ms; above 2**31 - 1 (~24.8 days) it overflows and clamps down to
+// 1ms (with a TimeoutOverflowWarning). We reject the whole out-of-range domain so
+// a caller never gets a silently wrong rate.
+const MIN_INTERVAL_MS = 1;
+const MAX_INTERVAL_MS = 2_147_483_647;
+
 /**
- * Reject intervals that would make the schedule meaningless or starve the
- * scheduler (NaN, Infinity, zero, or negative). Zero is rejected because a
- * zero-length wait would let `next()` return without ever yielding to the
- * reducer, so a tight consumer loop could monopolize it; a bad value should fail
- * loudly at the call site rather than quietly spin or never fire.
+ * Reject intervals the timer backend can't honor faithfully, so a bad value
+ * fails loudly at the call site instead of quietly ticking at the wrong rate.
+ * The floor is 1ms: below it the Node timer clamps up to 1ms anyway, and a value
+ * tiny enough (e.g. `Number.MIN_VALUE`) rounds away entirely when added to
+ * `performance.now()`, so `remaining` never goes positive and `next()` returns
+ * synchronously forever, starving the reducer. Fractional values `>= 1` are fine
+ * — the timer just truncates them — so a computed interval like `125 / 2` is
+ * accepted. `!Number.isFinite` rejects NaN and Infinity.
  *
  * @param ms - the candidate interval in milliseconds.
  */
 function assert_valid_interval(ms: number): void {
-	if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) {
-		throw new Error(`ticker interval must be a finite number > 0, got ${ms}`);
+	if (
+		typeof ms !== "number" ||
+		!Number.isFinite(ms) ||
+		ms < MIN_INTERVAL_MS ||
+		ms > MAX_INTERVAL_MS
+	) {
+		throw new Error(
+			`ticker interval must be a number of milliseconds ` +
+				`from ${MIN_INTERVAL_MS} to ${MAX_INTERVAL_MS}, got ${ms}`,
+		);
 	}
 }
 
@@ -113,7 +131,8 @@ function wait_for_interval_change(
  * slow to pull never triggers a catch-up burst; the effective rate simply can't
  * exceed how fast the consumer pulls.
  *
- * @param interval_ms - the initial spacing between ticks; finite and `> 0`.
+ * @param interval_ms - the initial spacing between ticks; a number of
+ *                       milliseconds from 1 to 2147483647.
  * @returns a ticker you can subscribe to and retime with `set_interval`.
  */
 export function createTicker(interval_ms: number): Ticker {
@@ -152,10 +171,12 @@ export function createTicker(interval_ms: number): Ticker {
 						const now = performance.now();
 						const remaining = last + current - now;
 						if (remaining <= 0) {
-							// Overdue (interval was just cut below the elapsed time, or the
-							// consumer pulls slower than the interval): fire now. Since the
-							// interval is always > 0, this returns synchronously at most once
-							// between waits, so it can't starve the reducer.
+							// Overdue: the interval was just cut below the elapsed time, or the
+							// consumer pulls slower than the interval. Fire now. Because the
+							// interval is at least 1ms, this synchronous path runs at most once
+							// per pull, and only when the consumer's own work between pulls
+							// already exceeds the interval (so it yields there); it never spins
+							// without yielding.
 							last = now;
 							return { done: false, value: undefined };
 						}

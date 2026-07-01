@@ -159,17 +159,38 @@ describe("createTicker — set_interval", () => {
 
 describe("createTicker — validation", () => {
 	test("rejects a non-finite, zero, or negative initial interval", () => {
-		expect(() => createTicker(NaN)).toThrow(/finite number > 0/);
-		expect(() => createTicker(Infinity)).toThrow(/finite number > 0/);
-		expect(() => createTicker(0)).toThrow(/finite number > 0/);
-		expect(() => createTicker(-1)).toThrow(/finite number > 0/);
+		expect(() => createTicker(NaN)).toThrow(/number of milliseconds/);
+		expect(() => createTicker(Infinity)).toThrow(/number of milliseconds/);
+		expect(() => createTicker(0)).toThrow(/number of milliseconds/);
+		expect(() => createTicker(-1)).toThrow(/number of milliseconds/);
+	});
+
+	test("rejects sub-1ms intervals that would starve the reducer", () => {
+		// The dangerous case: `last + current` rounds back to `last`, so `next()`
+		// would return synchronously forever. Below 1ms the timer can't honor the
+		// rate anyway, so the whole sub-1ms range is rejected.
+		expect(() => createTicker(Number.MIN_VALUE)).toThrow(/number of milliseconds/);
+		expect(() => createTicker(0.5)).toThrow(/number of milliseconds/);
+	});
+
+	test("accepts a fractional interval >= 1ms (e.g. from division)", () => {
+		expect(createTicker(125 / 2).interval_ms).toBe(62.5); // truncated by the timer, not rejected
+		expect(createTicker(1.5).interval_ms).toBe(1.5);
+	});
+
+	test("rejects an interval larger than the max timer delay", () => {
+		expect(() => createTicker(2_147_483_648)).toThrow(/number of milliseconds/);
+		expect(createTicker(2_147_483_647).interval_ms).toBe(2_147_483_647); // the boundary is allowed
 	});
 
 	test("rejects a bad value passed to set_interval", () => {
 		const ticker = createTicker(100);
-		expect(() => ticker.set_interval(-5)).toThrow(/finite number > 0/);
-		expect(() => ticker.set_interval(0)).toThrow(/finite number > 0/);
-		expect(() => ticker.set_interval(NaN)).toThrow(/finite number > 0/);
+		expect(() => ticker.set_interval(-5)).toThrow(/number of milliseconds/);
+		expect(() => ticker.set_interval(0)).toThrow(/number of milliseconds/);
+		expect(() => ticker.set_interval(0.5)).toThrow(/number of milliseconds/);
+		expect(() => ticker.set_interval(NaN)).toThrow(/number of milliseconds/);
 		expect(ticker.interval_ms).toBe(100); // unchanged after a rejected update
+		ticker.set_interval(62.5); // fractional >= 1 is accepted
+		expect(ticker.interval_ms).toBe(62.5);
 	});
 });
