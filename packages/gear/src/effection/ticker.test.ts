@@ -48,23 +48,41 @@ describe("createTicker — steady rate", () => {
 		});
 	});
 
-	test("emits an increasing count starting at 0", async () => {
-		const values = await run(function* () {
+	test("emits one void tick per interval", async () => {
+		const count = await run(function* () {
 			const ticker = createTicker(20);
-			const out: number[] = [];
+			let ticks = 0;
 			const consumer = yield* spawn(function* () {
-				for (const n of yield* each(ticker)) {
-					out.push(n);
-					if (out.length >= 3) {
+				for (const value of yield* each(ticker)) {
+					expect(value).toBeUndefined(); // ticks carry no payload
+					ticks += 1;
+					if (ticks >= 3) {
 						break;
 					}
 					yield* each.next();
 				}
 			});
 			yield* consumer;
-			return out;
+			return ticks;
 		});
-		expect(values).toEqual([0, 1, 2]);
+		expect(count).toBe(3);
+	});
+
+	test("a running ticker does not starve concurrent operations", async () => {
+		await run(function* () {
+			// The tightest consumer possible against the fastest interval allowed: if
+			// next() ever returned without yielding to the reducer, the sleep below
+			// would never resume and this test would hang.
+			const ticker = createTicker(1);
+			yield* spawn(function* () {
+				for (const _ of yield* each(ticker)) {
+					yield* each.next();
+				}
+			});
+			const before = performance.now();
+			yield* sleep(30);
+			expect(performance.now() - before).toBeGreaterThanOrEqual(25);
+		});
 	});
 
 	test("ticks are spaced by roughly the interval", async () => {
@@ -140,16 +158,18 @@ describe("createTicker — set_interval", () => {
 // ----------------------------------------------------------------------------
 
 describe("createTicker — validation", () => {
-	test("rejects a non-finite or negative initial interval", () => {
-		expect(() => createTicker(NaN)).toThrow(/finite number >= 0/);
-		expect(() => createTicker(Infinity)).toThrow(/finite number >= 0/);
-		expect(() => createTicker(-1)).toThrow(/finite number >= 0/);
+	test("rejects a non-finite, zero, or negative initial interval", () => {
+		expect(() => createTicker(NaN)).toThrow(/finite number > 0/);
+		expect(() => createTicker(Infinity)).toThrow(/finite number > 0/);
+		expect(() => createTicker(0)).toThrow(/finite number > 0/);
+		expect(() => createTicker(-1)).toThrow(/finite number > 0/);
 	});
 
 	test("rejects a bad value passed to set_interval", () => {
 		const ticker = createTicker(100);
-		expect(() => ticker.set_interval(-5)).toThrow(/finite number >= 0/);
-		expect(() => ticker.set_interval(NaN)).toThrow(/finite number >= 0/);
+		expect(() => ticker.set_interval(-5)).toThrow(/finite number > 0/);
+		expect(() => ticker.set_interval(0)).toThrow(/finite number > 0/);
+		expect(() => ticker.set_interval(NaN)).toThrow(/finite number > 0/);
 		expect(ticker.interval_ms).toBe(100); // unchanged after a rejected update
 	});
 });
