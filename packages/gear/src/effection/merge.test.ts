@@ -3,7 +3,7 @@
 import { describe, expect, expectTypeOf, test } from "vitest";
 import { createQueue, createSignal, each, resource, run, sleep, spawn } from "effection";
 import type { Operation, Stream, Subscription } from "effection";
-import { merge, type Tagged } from "./multi_stream.ts";
+import { merge, type Tagged } from "./merge.ts";
 
 // ----------------------------------------------------------------------------
 // test sources
