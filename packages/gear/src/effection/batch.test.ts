@@ -140,6 +140,41 @@ describe("maxTime batching", () => {
 		expect(batches).toEqual([["A", "B"], ["C"]]);
 	});
 
+	test("measures each window from its first item's arrival, even when a slow consumer lags", async () => {
+		// Regression guard: a batch that times out keeps its pending pull in
+		// `carried`. If that pull resolves while a slow consumer is busy, the next
+		// window must start from the item's *arrival*, not from when the consumer
+		// finally asks — otherwise items that arrived > maxTime apart get merged.
+		const src = make_source<string>();
+		const maxTime = 50;
+		const batches = await run(function* () {
+			const consumer = yield* spawn(function* () {
+				const out: string[][] = [];
+				for (const b of yield* each(batch({ maxTime })(src.stream))) {
+					out.push([...b]);
+					if (out.length >= 3) {
+						break;
+					}
+					if (out.length === 1) {
+						// Stay busy after [A] so B (which resolves the carried pull) and
+						// C both land before we ask for the next batch.
+						yield* sleep(200);
+					}
+					yield* each.next();
+				}
+				return out;
+			});
+			src.push("A"); // t≈0; [A] emitted once its window closes at ~50
+			yield* sleep(80);
+			src.push("B"); // t≈80; resolves the pull carried from [A]
+			yield* sleep(90);
+			src.push("C"); // t≈170; > maxTime after B, so it must be its own batch
+			yield* sleep(250);
+			return yield* consumer;
+		});
+		expect(batches).toEqual([["A"], ["B"], ["C"]]);
+	});
+
 	test("maxTime of 0 emits each item as its own batch", async () => {
 		const src = make_source<number>();
 		const batches = await run(function* () {
@@ -208,9 +243,26 @@ describe("Stream<T, never> contract", () => {
 // options validation
 // ----------------------------------------------------------------------------
 
-describe("options", () => {
+describe("options validation", () => {
 	test("throws when neither maxTime nor maxSize is given", () => {
 		expect(() => batch({})).toThrow(/maxTime or maxSize/);
+	});
+
+	test("rejects a negative maxTime", () => {
+		expect(() => batch({ maxTime: -1 })).toThrow(/maxTime/);
+	});
+
+	test("rejects a non-finite maxTime", () => {
+		expect(() => batch({ maxTime: Number.POSITIVE_INFINITY })).toThrow(/maxTime/);
+		expect(() => batch({ maxTime: Number.NaN })).toThrow(/maxTime/);
+	});
+
+	test("rejects a maxSize below 1", () => {
+		expect(() => batch({ maxSize: 0 })).toThrow(/maxSize/);
+	});
+
+	test("rejects a non-integer maxSize", () => {
+		expect(() => batch({ maxSize: 1.5 })).toThrow(/maxSize/);
 	});
 });
 
