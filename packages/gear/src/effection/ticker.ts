@@ -135,7 +135,7 @@ function wait_for_interval_change(
  *                       milliseconds from 1 to 2147483647.
  * @returns a ticker you can subscribe to and retime with `set_interval`.
  */
-export function createTicker(interval_ms: number): Ticker {
+export function create_ticker(interval_ms: number): Ticker {
 	assert_valid_interval(interval_ms);
 	let current = interval_ms;
 	// Bumped on every change. A waiter records the revision it saw before it slept

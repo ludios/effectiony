@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import { each, run, sleep, spawn } from "effection";
 import type { Operation } from "effection";
-import { createTicker, type Ticker } from "./ticker.ts";
+import { create_ticker, type Ticker } from "./ticker.ts";
 
 // ----------------------------------------------------------------------------
 // helpers
@@ -36,11 +36,11 @@ function* record_ticks(ticker: Ticker, start: number): Operation<number[]> {
 // basic ticking
 // ----------------------------------------------------------------------------
 
-describe("createTicker — steady rate", () => {
+describe("create_ticker — steady rate", () => {
 	test("first tick fires after one interval, not immediately", async () => {
 		await run(function* () {
 			const start = performance.now();
-			const at = yield* record_ticks(createTicker(50), start);
+			const at = yield* record_ticks(create_ticker(50), start);
 			yield* sleep(30); // less than one interval
 			expect(at.length).toBe(0);
 			yield* sleep(40); // ~70ms total: one interval has passed
@@ -50,7 +50,7 @@ describe("createTicker — steady rate", () => {
 
 	test("emits one void tick per interval", async () => {
 		const count = await run(function* () {
-			const ticker = createTicker(20);
+			const ticker = create_ticker(20);
 			let ticks = 0;
 			const consumer = yield* spawn(function* () {
 				for (const value of yield* each(ticker)) {
@@ -73,7 +73,7 @@ describe("createTicker — steady rate", () => {
 			// The tightest consumer possible against the fastest interval allowed: if
 			// next() ever returned without yielding to the reducer, the sleep below
 			// would never resume and this test would hang.
-			const ticker = createTicker(1);
+			const ticker = create_ticker(1);
 			yield* spawn(function* () {
 				for (const _ of yield* each(ticker)) {
 					yield* each.next();
@@ -88,7 +88,7 @@ describe("createTicker — steady rate", () => {
 	test("ticks are spaced by roughly the interval", async () => {
 		await run(function* () {
 			const start = performance.now();
-			const at = yield* record_ticks(createTicker(40), start);
+			const at = yield* record_ticks(create_ticker(40), start);
 			yield* sleep(140); // room for ~3 ticks at 40ms
 			expect(at.length).toBeGreaterThanOrEqual(2);
 			for (let i = 1; i < at.length; i++) {
@@ -103,11 +103,11 @@ describe("createTicker — steady rate", () => {
 // changing the rate
 // ----------------------------------------------------------------------------
 
-describe("createTicker — set_interval", () => {
+describe("create_ticker — set_interval", () => {
 	test("speeding up an in-flight wait fires sooner than the old interval", async () => {
 		await run(function* () {
 			const start = performance.now();
-			const ticker = createTicker(1000); // a long first wait...
+			const ticker = create_ticker(1000); // a long first wait...
 			const at = yield* record_ticks(ticker, start);
 			yield* sleep(30);
 			expect(at.length).toBe(0); // nothing yet, still deep inside the 1000ms wait
@@ -120,7 +120,7 @@ describe("createTicker — set_interval", () => {
 	test("dropping the interval below elapsed time fires immediately", async () => {
 		await run(function* () {
 			const start = performance.now();
-			const ticker = createTicker(1000);
+			const ticker = create_ticker(1000);
 			const at = yield* record_ticks(ticker, start);
 			yield* sleep(50); // 50ms into the wait
 			ticker.set_interval(10); // due time (last + 10 = 10ms) is already in the past
@@ -133,7 +133,7 @@ describe("createTicker — set_interval", () => {
 	test("slowing down stretches the spacing of later ticks", async () => {
 		await run(function* () {
 			const start = performance.now();
-			const ticker = createTicker(30);
+			const ticker = create_ticker(30);
 			const at = yield* record_ticks(ticker, start);
 			yield* sleep(80); // a couple of fast ticks land
 			const fast_count = at.length;
@@ -146,7 +146,7 @@ describe("createTicker — set_interval", () => {
 	});
 
 	test("interval_ms reflects the latest value", () => {
-		const ticker = createTicker(100);
+		const ticker = create_ticker(100);
 		expect(ticker.interval_ms).toBe(100);
 		ticker.set_interval(250);
 		expect(ticker.interval_ms).toBe(250);
@@ -157,34 +157,34 @@ describe("createTicker — set_interval", () => {
 // validation
 // ----------------------------------------------------------------------------
 
-describe("createTicker — validation", () => {
+describe("create_ticker — validation", () => {
 	test("rejects a non-finite, zero, or negative initial interval", () => {
-		expect(() => createTicker(NaN)).toThrow(/number of milliseconds/);
-		expect(() => createTicker(Infinity)).toThrow(/number of milliseconds/);
-		expect(() => createTicker(0)).toThrow(/number of milliseconds/);
-		expect(() => createTicker(-1)).toThrow(/number of milliseconds/);
+		expect(() => create_ticker(NaN)).toThrow(/number of milliseconds/);
+		expect(() => create_ticker(Infinity)).toThrow(/number of milliseconds/);
+		expect(() => create_ticker(0)).toThrow(/number of milliseconds/);
+		expect(() => create_ticker(-1)).toThrow(/number of milliseconds/);
 	});
 
 	test("rejects sub-1ms intervals that would starve the reducer", () => {
 		// The dangerous case: `last + current` rounds back to `last`, so `next()`
 		// would return synchronously forever. Below 1ms the timer can't honor the
 		// rate anyway, so the whole sub-1ms range is rejected.
-		expect(() => createTicker(Number.MIN_VALUE)).toThrow(/number of milliseconds/);
-		expect(() => createTicker(0.5)).toThrow(/number of milliseconds/);
+		expect(() => create_ticker(Number.MIN_VALUE)).toThrow(/number of milliseconds/);
+		expect(() => create_ticker(0.5)).toThrow(/number of milliseconds/);
 	});
 
 	test("accepts a fractional interval >= 1ms (e.g. from division)", () => {
-		expect(createTicker(125 / 2).interval_ms).toBe(62.5); // truncated by the timer, not rejected
-		expect(createTicker(1.5).interval_ms).toBe(1.5);
+		expect(create_ticker(125 / 2).interval_ms).toBe(62.5); // truncated by the timer, not rejected
+		expect(create_ticker(1.5).interval_ms).toBe(1.5);
 	});
 
 	test("rejects an interval larger than the max timer delay", () => {
-		expect(() => createTicker(2_147_483_648)).toThrow(/number of milliseconds/);
-		expect(createTicker(2_147_483_647).interval_ms).toBe(2_147_483_647); // the boundary is allowed
+		expect(() => create_ticker(2_147_483_648)).toThrow(/number of milliseconds/);
+		expect(create_ticker(2_147_483_647).interval_ms).toBe(2_147_483_647); // the boundary is allowed
 	});
 
 	test("rejects a bad value passed to set_interval", () => {
-		const ticker = createTicker(100);
+		const ticker = create_ticker(100);
 		expect(() => ticker.set_interval(-5)).toThrow(/number of milliseconds/);
 		expect(() => ticker.set_interval(0)).toThrow(/number of milliseconds/);
 		expect(() => ticker.set_interval(0.5)).toThrow(/number of milliseconds/);
