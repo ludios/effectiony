@@ -111,7 +111,7 @@ describe("adjustable_interval — set interval", () => {
 			const at = yield* record_ticks(a_i, start);
 			yield* sleep(30);
 			expect(at.length).toBe(0); // nothing yet, still deep inside the 1000ms wait
-			a_i.interval = 60; // ...retimed to fire at last(0) + 60ms
+			a_i.delay = 60; // ...retimed to fire at last(0) + 60ms
 			yield* sleep(80); // well past 60ms, nowhere near 1000ms
 			expect(at.length).toBeGreaterThanOrEqual(1);
 		});
@@ -123,7 +123,7 @@ describe("adjustable_interval — set interval", () => {
 			const a_i = adjustable_interval(1000);
 			const at = yield* record_ticks(a_i, start);
 			yield* sleep(50); // 50ms into the wait
-			a_i.interval = 10; // due time (last + 10 = 10ms) is already in the past
+			a_i.delay = 10; // due time (last + 10 = 10ms) is already in the past
 			yield* sleep(20);
 			expect(at.length).toBeGreaterThanOrEqual(1);
 			expect(at[0]!).toBeLessThan(120); // fired promptly, not at ~1000ms
@@ -138,7 +138,7 @@ describe("adjustable_interval — set interval", () => {
 			yield* sleep(80); // a couple of fast ticks land
 			const fast_count = at.length;
 			expect(fast_count).toBeGreaterThanOrEqual(2);
-			a_i.interval = 500; // throttle way down
+			a_i.delay = 500; // throttle way down
 			yield* sleep(120); // less than one slow interval
 			// At most one more tick (the one already in flight when we retimed).
 			expect(at.length - fast_count).toBeLessThanOrEqual(1);
@@ -147,9 +147,9 @@ describe("adjustable_interval — set interval", () => {
 
 	test("interval reflects the latest value", () => {
 		const a_i = adjustable_interval(100);
-		expect(a_i.interval).toBe(100);
-		a_i.interval = 250;
-		expect(a_i.interval).toBe(250);
+		expect(a_i.delay).toBe(100);
+		a_i.delay = 250;
+		expect(a_i.delay).toBe(250);
 	});
 });
 
@@ -174,23 +174,23 @@ describe("adjustable_interval — validation", () => {
 	});
 
 	test("accepts a fractional interval >= 1ms (e.g. from division)", () => {
-		expect(adjustable_interval(125 / 2).interval).toBe(62.5); // truncated by the timer, not rejected
-		expect(adjustable_interval(1.5).interval).toBe(1.5);
+		expect(adjustable_interval(125 / 2).delay).toBe(62.5); // truncated by the timer, not rejected
+		expect(adjustable_interval(1.5).delay).toBe(1.5);
 	});
 
 	test("rejects an interval larger than the max timer delay", () => {
 		expect(() => adjustable_interval(2_147_483_648)).toThrow(/number of milliseconds/);
-		expect(adjustable_interval(2_147_483_647).interval).toBe(2_147_483_647); // the boundary is allowed
+		expect(adjustable_interval(2_147_483_647).delay).toBe(2_147_483_647); // the boundary is allowed
 	});
 
 	test("rejects a bad value passed to interval", () => {
 		const a_i = adjustable_interval(100);
-		expect(() => { a_i.interval = -5; }).toThrow(/number of milliseconds/);
-		expect(() => { a_i.interval = 0; }).toThrow(/number of milliseconds/);
-		expect(() => { a_i.interval = 0.5; }).toThrow(/number of milliseconds/);
-		expect(() => { a_i.interval = NaN; }).toThrow(/number of milliseconds/);
-		expect(a_i.interval).toBe(100); // unchanged after a rejected update
-		a_i.interval = 62.5; // fractional >= 1 is accepted
-		expect(a_i.interval).toBe(62.5);
+		expect(() => { a_i.delay = -5; }).toThrow(/number of milliseconds/);
+		expect(() => { a_i.delay = 0; }).toThrow(/number of milliseconds/);
+		expect(() => { a_i.delay = 0.5; }).toThrow(/number of milliseconds/);
+		expect(() => { a_i.delay = NaN; }).toThrow(/number of milliseconds/);
+		expect(a_i.delay).toBe(100); // unchanged after a rejected update
+		a_i.delay = 62.5; // fractional >= 1 is accepted
+		expect(a_i.delay).toBe(62.5);
 	});
 });

@@ -12,13 +12,13 @@ import type { Operation, Stream } from "effection";
 /**
  * A {@link Stream} of evenly-spaced ticks whose spacing can be changed while it
  * is running. Consume it like any other stream — `for (const _ of yield*
- * each(ticker))` — and call `set_interval` from anywhere, including
+ * each(ticker))` — and call `.delay = ...` from anywhere, including
  * outside any operation, to make the ticks faster or slower.
  *
  * Ticks carry no value (`void`): the stream exists purely for its timing. Each
  * subscription is independent and schedules its next tick relative to when it
- * last fired, but every subscription reads the one shared interval, so a single
- * `set_interval` call retimes them all.
+ * last fired, but every subscription reads the one shared delay, so a single
+ * `.delay = ...` call retimes them all.
  */
 export interface AdjustableInterval extends Stream<void, never> {
 	/**
@@ -27,47 +27,45 @@ export interface AdjustableInterval extends Stream<void, never> {
 	 * `<time it last ticked> + ms`, which fires immediately if that moment has
 	 * already passed. Must be a number of milliseconds from 1 to 2147483647.
 	 */
-	interval: number;
+	delay: number;
 }
 
-/** A one-shot callback that wakes a subscription blocked on an interval change. */
+/** A one-shot callback that wakes a subscription blocked on a delay change. */
 type Wake = () => void;
 
 // Bounds of a sleep the Node timer backend honors faithfully. Below 1ms it
 // clamps up to 1ms; above 2**31 - 1 (~24.8 days) it overflows and clamps down to
 // 1ms (with a TimeoutOverflowWarning). We reject the whole out-of-range domain so
 // a caller never gets a silently wrong rate.
-const MIN_INTERVAL_MS = 1;
-const MAX_INTERVAL_MS = 2_147_483_647;
+const MIN_DELAY_MS = 1;
+const MAX_DELAY_MS = 2_147_483_647;
 
 /**
- * Reject intervals the timer backend can't honor faithfully, so a bad value
+ * Reject delays the timer backend can't honor faithfully, so a bad value
  * fails loudly at the call site instead of quietly ticking at the wrong rate.
  * The floor is 1ms: below it the Node timer clamps up to 1ms anyway, and a value
  * tiny enough (e.g. `Number.MIN_VALUE`) rounds away entirely when added to
  * `performance.now()`, so `remaining` never goes positive and `next()` returns
- * synchronously forever, starving the reducer. Fractional values `>= 1` are fine
- * — the timer just truncates them — so a computed interval like `125 / 2` is
- * accepted. `!Number.isFinite` rejects NaN and Infinity.
+ * synchronously forever, starving the reducer.
  *
- * @param ms - the candidate interval in milliseconds.
+ * @param ms - the candidate delay in milliseconds.
  */
-function assert_valid_interval(ms: number): void {
+function assert_valid_delay(ms: number): void {
 	if (
 		typeof ms !== "number" ||
 		!Number.isFinite(ms) ||
-		ms < MIN_INTERVAL_MS ||
-		ms > MAX_INTERVAL_MS
+		ms < MIN_DELAY_MS ||
+		ms > MAX_DELAY_MS
 	) {
 		throw new Error(
-			`ticker interval must be a number of milliseconds ` +
-				`from ${MIN_INTERVAL_MS} to ${MAX_INTERVAL_MS}, got ${ms}`,
+			`ticker delay must be a number of milliseconds ` +
+			`from ${MIN_DELAY_MS} to ${MAX_DELAY_MS}, got ${ms}`,
 		);
 	}
 }
 
 /**
- * Resolve and drop every waiter currently blocked on an interval change. The
+ * Resolve and drop every waiter currently blocked on a delay change. The
  * set is snapshotted and cleared *before* the callbacks run, so if resolving one
  * synchronously registers a fresh waiter, that new waiter is kept for the next
  * change rather than being resolved by this one.
@@ -83,7 +81,7 @@ function notify_waiters(waiters: Set<Wake>): void {
 }
 
 /**
- * Block until the ticker's interval changes. Compares against the revision that
+ * Block until the ticker's delay changes. Compares against the revision that
  * was current when the caller computed its deadline, so a change that lands
  * between that read and this registration is not missed — it resolves at once.
  * The waiter is a one-shot entry in `waiters` that is always removed again,
@@ -94,14 +92,14 @@ function notify_waiters(waiters: Set<Wake>): void {
  * @param observed_revision - the revision the caller saw before it started waiting.
  * @returns an operation that resolves once the revision has moved on.
  */
-function wait_for_interval_change(
+function wait_for_delay_change(
 	waiters: Set<Wake>,
 	get_revision: () => number,
 	observed_revision: number,
 ): Operation<void> {
 	return action<void>((resolve) => {
 		// A change may have landed between the caller reading the revision and this
-		// executor running (e.g. another task called set_interval); if so, the
+		// executor running (e.g. another task called `.delay = ...`); if so, the
 		// notification already went out to a not-yet-registered waiter, so resolve
 		// now instead of blocking forever on a change that already happened.
 		if (get_revision() !== observed_revision) {
@@ -129,29 +127,29 @@ function wait_for_interval_change(
  * slow to pull never triggers a catch-up burst; the effective rate simply can't
  * exceed how fast the consumer pulls.
  *
- * @param interval - the initial spacing between ticks; a number of
- *                   milliseconds from 1 to 2147483647.
+ * @param delay - the initial spacing between ticks; a number of
+ *                milliseconds from 1 to 2147483647.
  * @returns a ticker you can subscribe to and retime with `set_interval`.
  */
-export function adjustable_interval(interval: number): AdjustableInterval {
-	assert_valid_interval(interval);
-	let current = interval;
+export function adjustable_interval(delay: number): AdjustableInterval {
+	assert_valid_delay(delay);
+	let current = delay;
 	// Bumped on every change. A waiter records the revision it saw before it slept
 	// and wakes when the revision moves. This coalesces redundant changes — a
-	// burst of set_interval calls between two pulls just leaves one higher number
-	// to observe — and, together with the pre-check in wait_for_interval_change,
+	// burst of `.delay = ...` calls between two pulls just leaves one higher number
+	// to observe — and, together with the pre-check in wait_for_delay_change,
 	// closes the gap where a change lands after the deadline was computed but
 	// before the waiter registered.
 	let revision = 0;
 	const waiters = new Set<Wake>();
 
 	return {
-		get interval() {
+		get delay() {
 			return current;
 		},
 
-		set interval(ms: number) {
-			assert_valid_interval(ms);
+		set delay(ms: number) {
+			assert_valid_delay(ms);
 			if (ms === current) {
 				return;
 			}
@@ -169,22 +167,22 @@ export function adjustable_interval(interval: number): AdjustableInterval {
 						const now = performance.now();
 						const remaining = last + current - now;
 						if (remaining <= 0) {
-							// Overdue: the interval was just cut below the elapsed time, or the
-							// consumer pulls slower than the interval. Fire now. Because the
-							// interval is at least 1ms, this synchronous path runs at most once
+							// Overdue: the delay was just cut below the elapsed time, or the
+							// consumer pulls slower than the delay. Fire now. Because the
+							// delay is at least 1ms, this synchronous path runs at most once
 							// per pull, and only when the consumer's own work between pulls
-							// already exceeds the interval (so it yields there); it never spins
+							// already exceeds the delay (so it yields there); it never spins
 							// without yielding.
 							last = now;
 							return { done: false, value: undefined };
 						}
 						const observed = revision;
-						// Wake when the wait elapses OR when the interval changes, then loop
+						// Wake when the wait elapses OR when the delay changes, then loop
 						// to recompute against the (possibly new) `current`. race halts the
 						// loser, so at most one timer is ever pending.
 						yield* race([
 							sleep(remaining),
-							wait_for_interval_change(waiters, () => revision, observed),
+							wait_for_delay_change(waiters, () => revision, observed),
 						]);
 					}
 				},
