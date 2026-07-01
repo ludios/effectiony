@@ -7,7 +7,7 @@
 // `Stream<T, never>` (and, for a NATS consumer, closing the consumer, because
 // halting a pending consumer pull triggers its close path).
 
-import { spawn } from "effection";
+import { useScope } from "effection";
 import type { Operation, Stream, Task } from "effection";
 import { timebox } from "@effectionx/timebox";
 
@@ -43,6 +43,10 @@ function unwrap<T>(pulled: Pulled<T>): T {
  * either `maxTime` elapses (measured from the arrival of the batch's first item)
  * or the batch reaches `maxSize`. At least one of the two must be provided.
  *
+ * "Arrival" means the moment `subscription.next()` resolves an item, not the
+ * moment a producer enqueued it. For an already-buffering source, an item that
+ * was waiting in the upstream buffer is timed from when this batcher pulls it.
+ *
  * The first item of every batch is awaited with **no** deadline, so an idle
  * source never times a batch out into a spurious, empty result — `maxTime` only
  * bounds how long we keep waiting to *extend* a batch that has already started.
@@ -77,6 +81,12 @@ export function batch(
 	}
 	return <T>(stream: Stream<T, never>): Stream<Readonly<T[]>, never> => ({
 		*[Symbol.iterator]() {
+			// The scope in which this subscription was created. Carried pulls are
+			// spawned here, not in the caller's current task, so they live and die
+			// with the subscription: `each.next()` runs in the consumer's task, and
+			// spawning there would let a carried pull outlive a broken `each` loop
+			// and consume (drop) one more source item.
+			const subscription_scope = yield* useScope();
 			const subscription = yield* stream;
 			// A pull started for a previous batch that timed out before it resolved.
 			// The next batch consumes it — keeping its real arrival time — instead of
@@ -120,7 +130,7 @@ export function batch(
 						// Race the next item against the remaining window. On timeout keep
 						// the still-pending pull (with its eventual arrival time) for the
 						// next batch rather than halting it.
-						const task = yield* spawn(fresh_pull);
+						const task = yield* subscription_scope.spawn(fresh_pull);
 						const outcome = yield* timebox(remaining, () => task);
 						if (outcome.timeout) {
 							carried = task;

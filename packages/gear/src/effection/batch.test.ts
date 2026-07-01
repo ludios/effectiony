@@ -29,6 +29,38 @@ function make_source<T>(): { stream: Stream<T, never>; push: (value: T) => void 
 }
 
 /**
+ * Like {@link make_source}, but its subscription outlives the consumer (the
+ * queue is owned here, not torn down when the `each` loop ends) and it counts
+ * how many items were actually *retrieved*. Lets a test observe whether `batch`
+ * consumes a source item after the consumer has broken out of the loop.
+ *
+ * @returns the `stream`, a `push`, and a `consumed()` count of retrieved items.
+ */
+function counting_source<T>(): {
+	stream: Stream<T, never>;
+	push: (value: T) => void;
+	consumed: () => number;
+} {
+	const queue = createQueue<T, never>();
+	let consumed = 0;
+	const stream: Stream<T, never> = {
+		// oxlint-disable-next-line eslint/require-yield
+		*[Symbol.iterator]() {
+			return {
+				*next() {
+					const result = yield* queue.next();
+					if (!result.done) {
+						consumed += 1;
+					}
+					return result;
+				},
+			};
+		},
+	};
+	return { stream, push: (value) => queue.add(value), consumed: () => consumed };
+}
+
+/**
  * A source that violates the `Stream<T, never>` contract by ending on its very
  * first `next()`. Used to prove `batch` surfaces the contract breach.
  *
@@ -173,6 +205,37 @@ describe("maxTime batching", () => {
 			return yield* consumer;
 		});
 		expect(batches).toEqual([["A"], ["B"], ["C"]]);
+	});
+
+	test("does not consume a source item after the consumer breaks out of the loop", async () => {
+		// The pull carried past a timed-out batch must be tied to the subscription's
+		// lifetime, not the caller task. Otherwise, breaking after a batch whose
+		// carried pull was created in a later each.next() leaves that pull alive to
+		// consume (and drop) one more source item while the caller keeps running.
+		const src = counting_source<string>();
+		const maxTime = 40;
+		await run(function* () {
+			const consumer = yield* spawn(function* () {
+				let batches = 0;
+				for (const _b of yield* each(batch({ maxTime })(src.stream))) {
+					batches += 1;
+					if (batches >= 2) {
+						break; // break after the SECOND batch (its carried pull is in this task)
+					}
+					yield* each.next();
+				}
+				yield* sleep(200); // keep the caller task alive after breaking
+			});
+			src.push("A"); // batch 1: [A]
+			yield* sleep(60);
+			src.push("B"); // batch 2: [B], leaves a pull carried for the next item
+			yield* sleep(60); // [B] emitted -> consumer breaks
+			const before = src.consumed(); // A and B
+			src.push("C"); // a leaked carried pull would consume this
+			yield* sleep(80);
+			expect(src.consumed()).toBe(before); // C must remain unconsumed
+			yield* consumer;
+		});
 	});
 
 	test("maxTime of 0 emits each item as its own batch", async () => {
