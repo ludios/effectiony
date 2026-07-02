@@ -3,6 +3,7 @@
 import { describe, expect, test } from "vitest";
 import { createQueue, each, run, sleep, spawn } from "effection";
 import type { Operation, Stream } from "effection";
+import { timebox } from "@effectionx/timebox";
 import { batch } from "./batch.ts";
 
 // ----------------------------------------------------------------------------
@@ -104,6 +105,108 @@ function one_then_ended_source(value: number): Stream<number, never> {
 			};
 		},
 	};
+}
+
+/**
+ * A source that emits one value immediately, then violates the contract by
+ * ending only after `delay` ms — long enough for the ending pull to be carried
+ * past a timed-out window, so the `done` arrives on a *carried* pull.
+ *
+ * @param value - the single value emitted before the source ends.
+ * @param delay - how long the second pull waits before reporting `done`.
+ * @returns a stream that yields `value` once, then ends after `delay` ms.
+ */
+function ends_later_source(value: number, delay: number): Stream<number, never> {
+	return {
+		// oxlint-disable-next-line eslint/require-yield
+		*[Symbol.iterator]() {
+			let pulls = 0;
+			return {
+				*next() {
+					pulls += 1;
+					if (pulls === 1) {
+						return { done: false, value };
+					}
+					yield* sleep(delay);
+					return { done: true, value: undefined as never };
+				},
+			};
+		},
+	};
+}
+
+/**
+ * A queue-backed source that can be made to throw from a pull, emulating a
+ * source whose `next()` fails (e.g. a lost NATS connection). Errors are
+ * enqueued like values, so a `fail` after N pushes throws on pull N+1.
+ *
+ * @returns the `stream`, a `push` to feed values, and a `fail` to enqueue an error.
+ */
+function failable_source<T>(): {
+	stream: Stream<T, never>;
+	push: (value: T) => void;
+	fail: (error: Error) => void;
+} {
+	const queue = createQueue<{ value: T } | { error: Error }, never>();
+	const stream: Stream<T, never> = {
+		// oxlint-disable-next-line eslint/require-yield
+		*[Symbol.iterator]() {
+			return {
+				*next() {
+					const item = yield* queue.next();
+					if (item.done) {
+						throw new Error("unreachable: the queue is never closed");
+					}
+					if ("error" in item.value) {
+						throw item.value.error;
+					}
+					return { done: false, value: item.value.value };
+				},
+			};
+		},
+	};
+	return {
+		stream,
+		push: (value) => queue.add({ value }),
+		fail: (error) => queue.add({ error }),
+	};
+}
+
+/**
+ * Like {@link make_source}, but counts pulls that were unwound by a halt while
+ * still pending — the observable stand-in for "halting a pending pull closes a
+ * NATS consumer".
+ *
+ * @returns the `stream`, a `push`, and `halted_pulls()`, the count of pulls
+ * unwound before they produced a result.
+ */
+function halt_counting_source<T>(): {
+	stream: Stream<T, never>;
+	push: (value: T) => void;
+	halted_pulls: () => number;
+} {
+	const queue = createQueue<T, never>();
+	let halted = 0;
+	const stream: Stream<T, never> = {
+		// oxlint-disable-next-line eslint/require-yield
+		*[Symbol.iterator]() {
+			return {
+				*next() {
+					let resolved = false;
+					try {
+						const result = yield* queue.next();
+						resolved = true;
+						return result;
+					} finally {
+						if (!resolved) {
+							halted += 1;
+						}
+					}
+				},
+			};
+		},
+	};
+	return { stream, push: (value) => queue.add(value), halted_pulls: () => halted };
 }
 
 // ----------------------------------------------------------------------------
@@ -282,6 +385,84 @@ describe("maxSize batching", () => {
 		});
 		expect(batches).toEqual([[1, 2, 3], [4, 5, 6]]);
 	});
+
+	test("with both options, a partial batch is emitted when maxTime fires first", async () => {
+		const src = make_source<string>();
+		const batches = await run(function* () {
+			const consumer = yield* spawn(() =>
+				take_batches(batch({ maxTime: 60, maxSize: 10 })(src.stream), 1),
+			);
+			src.push("A");
+			yield* sleep(20);
+			src.push("B"); // joins A's window; only 2 of 10 items when the window closes
+			return yield* consumer;
+		});
+		expect(batches).toEqual([["A", "B"]]);
+	});
+
+	test("maxSize of 1 emits singleton batches immediately, without waiting on the window", async () => {
+		// If the size check did not fire before the window logic, each batch
+		// would stall for the enormous maxTime and time out the test.
+		const src = make_source<number>();
+		const batches = await run(function* () {
+			const consumer = yield* spawn(() =>
+				take_batches(batch({ maxSize: 1, maxTime: 60_000 })(src.stream), 3),
+			);
+			for (const n of [1, 2, 3]) {
+				src.push(n);
+			}
+			return yield* consumer;
+		});
+		expect(batches).toEqual([[1], [2], [3]]);
+	});
+
+	test("a carried item leads the next batch and counts toward its maxSize", async () => {
+		// After [A] times out, a pull is carried. Its item must open batch 2 AND
+		// count toward maxSize: with one more item the batch is full and must be
+		// emitted immediately, well before batch 2's 40ms window would close.
+		const src = make_source<string>();
+		const emitted: string[][] = [];
+		await run(function* () {
+			yield* spawn(function* () {
+				for (const b of yield* each(batch({ maxTime: 40, maxSize: 2 })(src.stream))) {
+					emitted.push([...b]);
+					yield* each.next();
+				}
+			});
+			src.push("A");
+			yield* sleep(60); // [A] emitted at ~40ms; a pull is carried for batch 2
+			expect(emitted).toEqual([["A"]]);
+			src.push("B"); // resolves the carried pull: batch 2 is [B, ...]
+			src.push("C"); // fills batch 2 to maxSize
+			yield* sleep(15); // well inside B's 40ms window
+			expect(emitted).toEqual([["A"], ["B", "C"]]); // emitted by size, not by the window
+		});
+	});
+
+	test("yields a fresh array per batch and never mutates an already-yielded batch", async () => {
+		// take_batches copies each batch, which would mask reuse of the internal
+		// items array — so collect the yielded arrays themselves.
+		const src = make_source<number>();
+		const collected: Array<readonly number[]> = [];
+		await run(function* () {
+			const consumer = yield* spawn(function* () {
+				for (const b of yield* each(batch({ maxSize: 2 })(src.stream))) {
+					collected.push(b);
+					if (collected.length >= 2) {
+						break;
+					}
+					yield* each.next();
+				}
+			});
+			for (const n of [1, 2, 3, 4]) {
+				src.push(n);
+			}
+			yield* consumer;
+		});
+		expect(collected[0]).not.toBe(collected[1]);
+		expect(collected[0]).toEqual([1, 2]);
+		expect(collected[1]).toEqual([3, 4]);
+	});
 });
 
 // ----------------------------------------------------------------------------
@@ -299,6 +480,93 @@ describe("Stream<T, never> contract", () => {
 		await expect(
 			run(() => take_batches(batch({ maxTime: 50 })(one_then_ended_source(1)), 1)),
 		).rejects.toThrow(/ended unexpectedly/);
+	});
+
+	test("throws when the contract violation arrives on a carried pull", async () => {
+		// The source ends 100ms into a pull that was carried past a timed-out 40ms
+		// window; the `done` must be surfaced by the next batch's deadline-free pull.
+		await expect(
+			run(() => take_batches(batch({ maxTime: 40 })(ends_later_source(1, 100)), 2)),
+		).rejects.toThrow(/ended unexpectedly/);
+	});
+});
+
+// ----------------------------------------------------------------------------
+// source errors: a failing pull must crash the consumer, never vanish
+// ----------------------------------------------------------------------------
+
+describe("source error propagation", () => {
+	test("propagates an error thrown during the first, deadline-free pull", async () => {
+		const src = failable_source<string>();
+		const result = run(() => take_batches(batch({ maxTime: 50 })(src.stream), 1));
+		src.fail(new Error("source exploded"));
+		await expect(result).rejects.toThrow("source exploded");
+	});
+
+	test("propagates an error that fails a carried pull while the consumer is busy", async () => {
+		// After [A] times out, a pull is carried with nobody awaiting it. When the
+		// source then fails, the error must crash the consumer via the
+		// subscription's scope — not vanish because no yield point observes it.
+		// The sleeps below are far longer than the test timeout: only the
+		// propagating error can end this run early.
+		const src = failable_source<string>();
+		await expect(
+			run(function* () {
+				yield* spawn(function* () {
+					for (const _b of yield* each(batch({ maxTime: 40 })(src.stream))) {
+						yield* sleep(60_000); // busy: the carried pull is unobserved
+						yield* each.next();
+					}
+				});
+				src.push("A");
+				yield* sleep(60); // [A] emitted at ~40ms; a fresh pull is carried
+				src.fail(new Error("source exploded"));
+				yield* sleep(60_000);
+			}),
+		).rejects.toThrow("source exploded");
+	});
+});
+
+// ----------------------------------------------------------------------------
+// halt safety: halting one next() call must not disturb the source
+// ----------------------------------------------------------------------------
+
+describe("halt safety of next()", () => {
+	test("halting next() mid-window carries the in-flight pull; its item leads the next batch", async () => {
+		// Regression guard: before pulls were recorded in `carried` up front, a
+		// halt here orphaned the in-flight pull, which silently ate the next
+		// source item. The halted call's partial batch ([A]) is dropped by design.
+		const src = make_source<string>();
+		await run(function* () {
+			const subscription = yield* batch({ maxTime: 50 })(src.stream);
+			src.push("A");
+			// Halt the first next() ~20ms into its 50ms extend window.
+			const outcome = yield* timebox(20, () => subscription.next());
+			expect(outcome.timeout).toBe(true);
+			src.push("B"); // must resolve the carried pull, not feed an orphan
+			yield* sleep(10);
+			src.push("C");
+			const result = yield* subscription.next();
+			expect(result.done).toBe(false);
+			expect([...result.value]).toEqual(["B", "C"]);
+		});
+	});
+
+	test("halting next() during the first, deadline-free pull leaves the source pull pending", async () => {
+		// Unwinding a pending pull is what closes a NATS consumer. A halt local
+		// to one next() call must not do that: the pull survives in the
+		// subscription's scope and its item opens the next batch.
+		const src = halt_counting_source<string>();
+		await run(function* () {
+			const subscription = yield* batch({ maxTime: 50 })(src.stream);
+			const outcome = yield* timebox(20, () => subscription.next());
+			expect(outcome.timeout).toBe(true); // halted while the first pull was pending
+			expect(src.halted_pulls()).toBe(0); // ...but the source pull was not unwound
+			src.push("A"); // resolved by the surviving pull, carried into the next batch
+			const result = yield* subscription.next();
+			expect(result.done).toBe(false);
+			expect([...result.value]).toEqual(["A"]);
+		});
 	});
 });
 

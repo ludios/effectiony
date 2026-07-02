@@ -59,6 +59,15 @@ function unwrap<T>(pulled: Pulled<T>): T {
  * timeout; if the subscription is abandoned before that item is consumed it is
  * dropped, which is fine for a lossy-on-shutdown source like the NATS consumer.
  *
+ * Pulls are never tied to a single `next()` call: every pull is spawned into
+ * the subscription's scope and recorded before it is awaited, so halting one
+ * `next()` (e.g. racing it against a shutdown signal) neither unwinds the
+ * pending source pull (which would close a NATS consumer) nor orphans it and
+ * loses its item — the pull is simply carried into the following `next()`.
+ * Items already collected into the halted call's partial batch are dropped,
+ * consistent with the lossy-on-shutdown stance above; source pulls are only
+ * halted when the subscription itself is torn down.
+ *
  * The source is typed `Stream<T, never>`, i.e. it is expected to never end; if it
  * ever yields `done` that violates the contract and this throws rather than
  * quietly ending the batched stream.
@@ -81,16 +90,19 @@ export function batch(
 	}
 	return <T>(stream: Stream<T, never>): Stream<Readonly<T[]>, never> => ({
 		*[Symbol.iterator]() {
-			// The scope in which this subscription was created. Carried pulls are
+			// The scope in which this subscription was created. All pulls are
 			// spawned here, not in the caller's current task, so they live and die
 			// with the subscription: `each.next()` runs in the consumer's task, and
-			// spawning there would let a carried pull outlive a broken `each` loop
-			// and consume (drop) one more source item.
+			// spawning there would tie a pull to one `next()` call — halting that
+			// call would unwind a pending source pull (closing a NATS consumer), or
+			// let a carried pull outlive a broken `each` loop and consume (drop)
+			// one more source item.
 			const subscription_scope = yield* useScope();
 			const subscription = yield* stream;
-			// A pull started for a previous batch that timed out before it resolved.
-			// The next batch consumes it — keeping its real arrival time — instead of
-			// halting it (which would close a NATS consumer) or dropping the item.
+			// The pull currently in flight, recorded *before* it is awaited so that
+			// a halt of the `next()` that started it leaves it running for the
+			// following batch — keeping its real arrival time — instead of orphaning
+			// the pull (losing an item) or halting the pull (closing a NATS consumer).
 			let carried: Task<Pulled<T>> | undefined;
 
 			function* fresh_pull(): Operation<Pulled<T>> {
@@ -98,13 +110,20 @@ export function batch(
 				return { result, at: performance.now() };
 			}
 
-			function* pull(): Operation<Pulled<T>> {
-				if (carried) {
-					const pulled = yield* carried;
-					carried = undefined;
-					return pulled;
+			// Start a pull if none is in flight, recording it in `carried` before
+			// the first suspension point so no halt can orphan it.
+			function* ensure_pull(): Operation<Task<Pulled<T>>> {
+				if (!carried) {
+					carried = yield* subscription_scope.spawn(fresh_pull);
 				}
-				return yield* fresh_pull();
+				return carried;
+			}
+
+			function* pull(): Operation<Pulled<T>> {
+				const task = yield* ensure_pull();
+				const pulled = yield* task;
+				carried = undefined;
+				return pulled;
 			}
 
 			return {
@@ -127,15 +146,16 @@ export function batch(
 						if (remaining <= 0) {
 							return { done: false, value: items };
 						}
-						// Race the next item against the remaining window. On timeout keep
-						// the still-pending pull (with its eventual arrival time) for the
-						// next batch rather than halting it.
-						const task = yield* subscription_scope.spawn(fresh_pull);
+						// Race the next item against the remaining window. The pull is
+						// already recorded in `carried`, so on timeout — or a halt of this
+						// next() call — the still-pending pull (with its eventual arrival
+						// time) is left for the next batch rather than halted or orphaned.
+						const task = yield* ensure_pull();
 						const outcome = yield* timebox(remaining, () => task);
 						if (outcome.timeout) {
-							carried = task;
 							return { done: false, value: items };
 						}
+						carried = undefined;
 						items.push(unwrap(outcome.value));
 					}
 				},
