@@ -97,6 +97,29 @@ describe("adjustable_interval — steady rate", () => {
 			}
 		});
 	});
+
+	test("a slow consumer gets one tick per pull, never a catch-up burst", async () => {
+		await run(function* () {
+			const a_i = adjustable_interval(10);
+			const start = performance.now();
+			const at: number[] = [];
+			yield* spawn(function* () {
+				for (const _ of yield* each(a_i)) {
+					at.push(performance.now() - start);
+					yield* sleep(60); // each pull takes ~6 intervals
+					yield* each.next();
+				}
+			});
+			yield* sleep(300);
+			// One tick per ~60ms pull (~5 of them), not one per 10ms interval (~30).
+			expect(at.length).toBeGreaterThanOrEqual(2);
+			expect(at.length).toBeLessThanOrEqual(6);
+			for (let i = 1; i < at.length; i++) {
+				// Spaced by the pull, not bunched into a burst of overdue ticks.
+				expect(at[i]! - at[i - 1]!).toBeGreaterThan(50);
+			}
+		});
+	});
 });
 
 // ----------------------------------------------------------------------------
@@ -145,11 +168,110 @@ describe("adjustable_interval — set interval", () => {
 		});
 	});
 
+	test("raising the delay postpones a pending tick past its original deadline", async () => {
+		await run(function* () {
+			const start = performance.now();
+			const a_i = adjustable_interval(200);
+			const at = yield* record_ticks(a_i, start);
+			yield* sleep(50); // well inside the first 200ms wait
+			a_i.delay = 5000; // pending tick reschedules to last(~0) + 5000
+			yield* sleep(300); // t~350: the old 200ms deadline has long passed...
+			expect(at.length).toBe(0); // ...but the tick moved out with the delay
+		});
+	});
+
+	test("retiming anchors to the last tick, not to when the delay was set", async () => {
+		await run(function* () {
+			const start = performance.now();
+			const a_i = adjustable_interval(5000);
+			const at = yield* record_ticks(a_i, start);
+			yield* sleep(100);
+			a_i.delay = 500; // due at last(~0) + 500, not at change(~100) + 500 = 600
+			yield* sleep(550); // t~650, comfortably past the 500ms deadline
+			expect(at.length).toBeGreaterThanOrEqual(1);
+			expect(at[0]!).toBeGreaterThanOrEqual(499);
+			expect(at[0]!).toBeLessThan(590); // would be >= 600 if anchored to the change
+		});
+	});
+
+	test("a delay change from outside any operation retimes a sleeping subscription", async () => {
+		await run(function* () {
+			const start = performance.now();
+			const a_i = adjustable_interval(5000);
+			const at = yield* record_ticks(a_i, start);
+			// Fire the setter from a plain timer callback, with no effection
+			// operation anywhere on the call stack.
+			setTimeout(() => { a_i.delay = 30; }, 20);
+			yield* sleep(150);
+			expect(at.length).toBeGreaterThanOrEqual(1);
+			expect(at[0]!).toBeLessThan(120); // retimed to ~30ms, nowhere near 5000
+		});
+	});
+
+	test("a burst of delay changes while waiting coalesces to the final value", async () => {
+		await run(function* () {
+			const start = performance.now();
+			const a_i = adjustable_interval(5000);
+			const at = yield* record_ticks(a_i, start);
+			yield* sleep(20);
+			// One synchronous burst; only the last value should govern the tick.
+			a_i.delay = 1000;
+			a_i.delay = 2000;
+			a_i.delay = 60;
+			yield* sleep(80); // t~100: due at last(~0) + 60
+			expect(at.length).toBeGreaterThanOrEqual(1);
+			expect(at.length).toBeLessThanOrEqual(2); // no extra tick per change
+			expect(at[0]!).toBeGreaterThan(55); // no spurious immediate tick from the burst
+			expect(at[0]!).toBeLessThan(95); // and not waiting out 1000/2000/5000
+		});
+	});
+
 	test("interval reflects the latest value", () => {
 		const a_i = adjustable_interval(100);
 		expect(a_i.delay).toBe(100);
 		a_i.delay = 250;
 		expect(a_i.delay).toBe(250);
+	});
+});
+
+// ----------------------------------------------------------------------------
+// multiple subscriptions
+// ----------------------------------------------------------------------------
+
+describe("adjustable_interval — multiple subscriptions", () => {
+	test("one delay change retimes every active subscription", async () => {
+		await run(function* () {
+			const start = performance.now();
+			const a_i = adjustable_interval(1000);
+			const first = yield* record_ticks(a_i, start);
+			yield* sleep(20); // stagger the phases so the subscriptions are distinct
+			const second = yield* record_ticks(a_i, start);
+			yield* sleep(20);
+			expect(first.length).toBe(0);
+			expect(second.length).toBe(0);
+			a_i.delay = 30; // first is overdue (fires now); second fires at ~20 + 30
+			yield* sleep(60);
+			expect(first.length).toBeGreaterThanOrEqual(1);
+			expect(second.length).toBeGreaterThanOrEqual(1);
+		});
+	});
+
+	test("halting a waiting consumer does not break later delay changes", async () => {
+		await run(function* () {
+			const start = performance.now();
+			const a_i = adjustable_interval(5000);
+			const doomed = yield* spawn(function* () {
+				for (const _ of yield* each(a_i)) {
+					yield* each.next();
+				}
+			});
+			const at = yield* record_ticks(a_i, start);
+			yield* sleep(20); // both subscriptions are parked in their first wait
+			yield* doomed.halt(); // discards one waiter mid-race
+			a_i.delay = 30; // must not trip over the discarded waiter...
+			yield* sleep(100);
+			expect(at.length).toBeGreaterThanOrEqual(1); // ...and still retimes the survivor
+		});
 	});
 });
 

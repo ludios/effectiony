@@ -129,7 +129,7 @@ function wait_for_delay_change(
  *
  * @param delay - the initial spacing between ticks; a number of
  *                milliseconds from 1 to 2147483647.
- * @returns a ticker you can subscribe to and retime with `set_interval`.
+ * @returns a ticker you can subscribe to and retime with `.delay = ...`.
  */
 export function adjustable_interval(delay: number): AdjustableInterval {
 	assert_valid_delay(delay);
@@ -169,10 +169,13 @@ export function adjustable_interval(delay: number): AdjustableInterval {
 						if (remaining <= 0) {
 							// Overdue: the delay was just cut below the elapsed time, or the
 							// consumer pulls slower than the delay. Fire now. Because the
-							// delay is at least 1ms, this synchronous path runs at most once
-							// per pull, and only when the consumer's own work between pulls
-							// already exceeds the delay (so it yields there); it never spins
-							// without yielding.
+							// delay is at least 1ms and firing resets `last`, this synchronous
+							// path runs at most once per pull; a consumer that pulls promptly
+							// always reaches the `sleep` below. Caveat: that sleep is this
+							// loop's only yield to the event loop, so a consumer whose work
+							// between pulls is purely synchronous CPU exceeding the delay
+							// takes this path on every pull and starves the event loop. Any
+							// real (async) work per tick avoids that.
 							last = now;
 							return { done: false, value: undefined };
 						}
