@@ -163,7 +163,7 @@ describe("JetStream helpers", () => {
 		await run(function* () {
 			const connection = yield* use_nats_connection({ servers: server.url });
 			const manager = yield* nats_jetstream_manager(connection);
-			yield* ensure_nats_stream(manager, stream_name, { name: stream_name, subjects: [subject] });
+			yield* ensure_nats_stream(manager, stream_name, { subjects: [subject] });
 			yield* ensure_nats_consumer(manager, stream_name, durable_name, {
 				durable_name,
 				ack_policy: AckPolicy.Explicit,
@@ -192,7 +192,7 @@ describe("JetStream helpers", () => {
 		await run(function* () {
 			const connection = yield* use_nats_connection({ servers: server.url });
 			const manager = yield* nats_jetstream_manager(connection);
-			const stream_config = { name: stream_name, subjects: [`${stream_name}.>`] };
+			const stream_config = { subjects: [`${stream_name}.>`] };
 			yield* ensure_nats_stream(manager, stream_name, stream_config);
 			yield* ensure_nats_stream(manager, stream_name, stream_config);
 			const consumer_config = { durable_name, ack_policy: AckPolicy.Explicit };
@@ -203,14 +203,30 @@ describe("JetStream helpers", () => {
 		});
 	});
 
-	it("rejects a stream config whose name does not match", async () => {
-		await expect(
-			run(function* () {
-				const connection = yield* use_nats_connection({ servers: server.url });
-				const manager = yield* nats_jetstream_manager(connection);
-				yield* ensure_nats_stream(manager, "expected_name", { name: "different_name" });
-			}),
-		).rejects.toThrow(/must match/);
+	it("updates the configuration on an existing stream", async () => {
+		const stream_name = unique_name("update_config");
+		await run(function* () {
+			const connection = yield* use_nats_connection({ servers: server.url });
+			const manager = yield* nats_jetstream_manager(connection);
+			const created = yield* ensure_nats_stream(manager, stream_name, {
+				subjects: [`${stream_name}.before`],
+				max_msgs: 100,
+			});
+			expect(created.config.name).toBe(stream_name);
+			expect(created.config.subjects).toEqual([`${stream_name}.before`]);
+			expect(created.config.max_msgs).toBe(100);
+			const updated = yield* ensure_nats_stream(manager, stream_name, {
+				subjects: [`${stream_name}.after`],
+				max_msgs: 50,
+			});
+			expect(updated.config.subjects).toEqual([`${stream_name}.after`]);
+			expect(updated.config.max_msgs).toBe(50);
+			// Confirm the new configuration is what the server reports, not just
+			// what the update call echoed back.
+			const info = yield* until(manager.streams.info(stream_name));
+			expect(info.config.subjects).toEqual([`${stream_name}.after`]);
+			expect(info.config.max_msgs).toBe(50);
+		});
 	});
 
 	it("propagates JetStream API errors for a missing consumer", async () => {
@@ -219,7 +235,7 @@ describe("JetStream helpers", () => {
 			run(function* () {
 				const connection = yield* use_nats_connection({ servers: server.url });
 				const manager = yield* nats_jetstream_manager(connection);
-				yield* ensure_nats_stream(manager, stream_name, { name: stream_name, subjects: [`${stream_name}.>`] });
+				yield* ensure_nats_stream(manager, stream_name, { subjects: [`${stream_name}.>`] });
 				yield* get_nats_consumer(connection, stream_name, "does_not_exist");
 			}),
 		).rejects.toThrow(/consumer not found/);
@@ -250,7 +266,7 @@ describe("JetStream helpers", () => {
 function* create_empty_consumer(connection: Parameters<typeof nats_jetstream>[0], stream_name: string) {
 	const durable_name = "worker";
 	const manager = yield* nats_jetstream_manager(connection);
-	yield* ensure_nats_stream(manager, stream_name, { name: stream_name, subjects: [`${stream_name}.>`] });
+	yield* ensure_nats_stream(manager, stream_name, { subjects: [`${stream_name}.>`] });
 	yield* ensure_nats_consumer(manager, stream_name, durable_name, {
 		durable_name,
 		ack_policy: AckPolicy.Explicit,

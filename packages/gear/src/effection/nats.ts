@@ -15,7 +15,7 @@
  * ConsumerMessages iterator to the consuming scope.
  */
 import { A } from "ayy";
-import { action, resource, spawn, until } from "effection";
+import { action, call, resource, spawn, until } from "effection";
 import type { Operation, Stream, Subscription as EffectionSubscription } from "effection";
 import {
 	ClosedConnectionError,
@@ -40,11 +40,13 @@ import type {
 	JetStreamManagerOptions,
 	JetStreamOptions,
 	JsMsg,
-	StreamConfig,
+	StreamInfo,
+	StreamUpdateConfig,
 } from "@nats-io/jetstream";
+import { getLogger } from "@logtape/logtape";
+const logger = getLogger(["sophon", "gear"]);
 
 type SettleState = "pending" | "settled" | "discarded";
-type AddStreamConfig = Partial<StreamConfig> & Pick<StreamConfig, "name">;
 type ErrorClass = Function & { readonly prototype: Error; readonly name: string };
 
 export type ConnectFn = () => Promise<NatsConnection>;
@@ -203,18 +205,6 @@ function assert_stream_name(stream_name: string): void {
  */
 function assert_consumer_name(consumer_name: string): void {
 	A.gt(consumer_name.trim().length, 0, "consumer_name must be non-empty");
-}
-
-/**
- * Assert that a stream creation config corresponds to the stream being ensured.
- *
- * @param stream_name - The stream name being looked up.
- * @param config - The stream creation config passed to streams.add().
- * @returns Nothing when the config is internally consistent.
- */
-function assert_stream_config_matches(stream_name: string, config: AddStreamConfig): void {
-	assert_stream_name(stream_name);
-	A.eq(config.name, stream_name, "stream config name must match stream_name");
 }
 
 /**
@@ -466,27 +456,42 @@ export function* nats_jetstream_manager(
 }
 
 /**
- * Ensure that a JetStream stream exists, creating it only when the server reports it missing.
- *
+ * Ensure that the JetStream stream exists and has a particular configuration.
+ * 
  * @param stream_manager - The JetStream manager used for stream administration.
- * @param stream_name - The stream name to inspect.
- * @param config - The stream creation config used only when the stream is missing.
- * @returns An operation that completes after the stream exists.
+ * @param stream_name - The name of the JetStream stream.
+ * @param config - The configuration to set on the stream.
+ * 
+ * For config, use e.g.
+ * 	const config = {
+ *		subjects: [
+ *			"some_stream_name.topic1",
+ *			"some_stream_name.topic2",
+ *		] as Array<string>,
+ *		retention: "limits",
+ *		max_age: 24 * 3600 * 1_000_000_000, // in nanoseconds
+ *		discard: "old",
+ *	} as const;
  */
-export function* ensure_nats_stream(
-	stream_manager: JetStreamManager,
-	stream_name: string,
-	config: AddStreamConfig,
-): Operation<void> {
-	assert_stream_config_matches(stream_name, config);
+export function* ensure_nats_stream(stream_manager: JetStreamManager, stream_name: string, config: Partial<StreamUpdateConfig>): Operation<StreamInfo> {
+	let exists = false;
+	let info;
 	try {
-		yield* until(stream_manager.streams.info(stream_name));
+		info = yield* call(() => stream_manager.streams.info(stream_name));
+		logger.info("found NATS JetStream for {stream_name}", { stream_name });
+		exists = true;
 	} catch (thrown_value) {
 		if (!is_jetstream_api_code(thrown_value, JetStreamApiCodes.StreamNotFound)) {
 			throw to_error(thrown_value);
 		}
-		yield* until(stream_manager.streams.add(config));
+		info = yield* call(() => stream_manager.streams.add({ name: stream_name, ...config }));
+		logger.info("created NATS JetStream for {stream_name}", { stream_name });
 	}
+	if (exists) {
+		info = yield* call(() => stream_manager.streams.update(stream_name, config));
+		logger.info("updated NATS JetStream for {stream_name}", { stream_name });
+	}
+	return info;
 }
 
 /**
