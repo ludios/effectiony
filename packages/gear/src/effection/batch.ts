@@ -1,4 +1,4 @@
-// Slop-provider: Claude Opus 4.8
+// Model-output: Claude Opus 4.8
 //
 // A replacement for @effectionx/stream-helpers' `batch`, which is unsuitable for
 // a source that is idle most of the time: it applies the maxTime deadline to the

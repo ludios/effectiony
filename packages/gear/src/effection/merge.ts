@@ -1,6 +1,6 @@
-// Slop-provider: Claude Opus 4.8
+// Model-output: Claude Opus 4.8
 // with with some code review from
-// Slop-provider: ChatGPT 5.5 Thinking
+// Model-output: ChatGPT 5.5 Thinking
 
 import { createQueue, resource, spawn } from "effection";
 import type { Queue, Stream, Subscription } from "effection";

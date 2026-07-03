@@ -1,4 +1,4 @@
-// Slop-provider: Claude Fable 5
+// Model-output: Claude Fable 5
 
 /**
  * Integration tests for the Effection NATS resources, run against a real

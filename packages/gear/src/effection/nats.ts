@@ -1,7 +1,7 @@
-// Slop-provider: ChatGPT 5.5 Thinking
-// Slop-provider: ChatGPT 5.5 Pro
-// Slop-provider: Claude Opus 4.8
-// Slop-provider: Claude Fable 5
+// Model-output: ChatGPT 5.5 Thinking
+// Model-output: ChatGPT 5.5 Pro
+// Model-output: Claude Opus 4.8
+// Model-output: Claude Fable 5
 
 /**
  * Effection resources for NATS connections and JetStream helpers.

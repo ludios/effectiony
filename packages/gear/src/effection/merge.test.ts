@@ -1,4 +1,4 @@
-// Slop-provider: Claude Opus 4.8
+// Model-output: Claude Opus 4.8
 
 import { describe, expect, expectTypeOf, test } from "vitest";
 import { createQueue, createSignal, each, resource, run, sleep, spawn } from "effection";
