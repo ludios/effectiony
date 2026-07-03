@@ -15,7 +15,7 @@
  * ConsumerMessages iterator to the consuming scope.
  */
 import { A } from "ayy";
-import { action, call, resource, spawn, until } from "effection";
+import { action, resource, spawn, until } from "effection";
 import type { Operation, Stream, Subscription as EffectionSubscription } from "effection";
 import {
 	ClosedConnectionError,
@@ -477,18 +477,18 @@ export function* ensure_nats_stream(stream_manager: JetStreamManager, stream_nam
 	let exists = false;
 	let info;
 	try {
-		info = yield* call(() => stream_manager.streams.info(stream_name));
+		info = yield* until(stream_manager.streams.info(stream_name));
 		logger.info("found NATS JetStream for {stream_name}", { stream_name });
 		exists = true;
 	} catch (thrown_value) {
 		if (!is_jetstream_api_code(thrown_value, JetStreamApiCodes.StreamNotFound)) {
 			throw to_error(thrown_value);
 		}
-		info = yield* call(() => stream_manager.streams.add({ name: stream_name, ...config }));
+		info = yield* until(stream_manager.streams.add({ name: stream_name, ...config }));
 		logger.info("created NATS JetStream for {stream_name}", { stream_name });
 	}
 	if (exists) {
-		info = yield* call(() => stream_manager.streams.update(stream_name, config));
+		info = yield* until(stream_manager.streams.update(stream_name, config));
 		logger.info("updated NATS JetStream for {stream_name}", { stream_name });
 	}
 	return info;
