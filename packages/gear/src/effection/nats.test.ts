@@ -23,7 +23,7 @@ import { connect as node_connect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/transport-node";
 
 import {
-	ensure_nats_consumer,
+	ensure_durable_nats_consumer,
 	ensure_nats_stream,
 	get_nats_consumer,
 	nats_jetstream,
@@ -158,21 +158,20 @@ describe("JetStream helpers", () => {
 	it("publishes and consumes messages with scoped cleanup", async () => {
 		const stream_name = unique_name("round_trip");
 		const subject = `${stream_name}.events`;
-		const durable_name = "worker";
+		const consumer_name = "worker";
 		const received: string[] = [];
 		await run(function* () {
 			const connection = yield* use_nats_connection({ servers: server.url });
 			const manager = yield* nats_jetstream_manager(connection);
 			yield* ensure_nats_stream(manager, stream_name, { subjects: [subject] });
-			yield* ensure_nats_consumer(manager, stream_name, durable_name, {
-				durable_name,
+			yield* ensure_durable_nats_consumer(manager, stream_name, consumer_name, {
 				ack_policy: AckPolicy.Explicit,
 			});
 			const client = nats_jetstream(connection);
 			for (let i = 0; i < 5; i++) {
 				yield* until(client.publish(subject, `message ${i}`));
 			}
-			const consumer = yield* get_nats_consumer(connection, stream_name, durable_name);
+			const consumer = yield* get_nats_consumer(connection, stream_name, consumer_name);
 			const messages = yield* use_nats_consumer_messages(consumer, { max_messages: 2 });
 			while (received.length < 5) {
 				const result = yield* messages.next();
@@ -186,21 +185,53 @@ describe("JetStream helpers", () => {
 		expect(received).toEqual(["message 0", "message 1", "message 2", "message 3", "message 4"]);
 	});
 
-	it("ensure_nats_stream and ensure_nats_consumer are idempotent", async () => {
+	it("ensure_nats_stream and ensure_durable_nats_consumer are idempotent", async () => {
 		const stream_name = unique_name("idempotent");
-		const durable_name = "worker";
+		const consumer_name = "worker";
 		await run(function* () {
 			const connection = yield* use_nats_connection({ servers: server.url });
 			const manager = yield* nats_jetstream_manager(connection);
 			const stream_config = { subjects: [`${stream_name}.>`] };
 			yield* ensure_nats_stream(manager, stream_name, stream_config);
 			yield* ensure_nats_stream(manager, stream_name, stream_config);
-			const consumer_config = { durable_name, ack_policy: AckPolicy.Explicit };
-			yield* ensure_nats_consumer(manager, stream_name, durable_name, consumer_config);
-			yield* ensure_nats_consumer(manager, stream_name, durable_name, consumer_config);
-			const info = yield* until(manager.consumers.info(stream_name, durable_name));
-			expect(info.name).toBe(durable_name);
+			const consumer_config = { ack_policy: AckPolicy.Explicit };
+			yield* ensure_durable_nats_consumer(manager, stream_name, consumer_name, consumer_config);
+			yield* ensure_durable_nats_consumer(manager, stream_name, consumer_name, consumer_config);
+			const info = yield* until(manager.consumers.info(stream_name, consumer_name));
+			expect(info.name).toBe(consumer_name);
 		});
+	});
+
+	it("ensure_durable_nats_consumer applies updatable config and rejects creation-only changes", async () => {
+		const stream_name = unique_name("consumer_update");
+		const consumer_name = "worker";
+		await run(function* () {
+			const connection = yield* use_nats_connection({ servers: server.url });
+			const manager = yield* nats_jetstream_manager(connection);
+			yield* ensure_nats_stream(manager, stream_name, { subjects: [`${stream_name}.>`] });
+			yield* ensure_durable_nats_consumer(manager, stream_name, consumer_name, {
+				ack_policy: AckPolicy.Explicit,
+				max_deliver: 5,
+			});
+			// Creation-only properties matching the existing consumer are
+			// tolerated while the updatable max_deliver change is applied.
+			const updated = yield* ensure_durable_nats_consumer(manager, stream_name, consumer_name, {
+				ack_policy: AckPolicy.Explicit,
+				max_deliver: 10,
+			});
+			expect(updated.config.max_deliver).toBe(10);
+			const info = yield* until(manager.consumers.info(stream_name, consumer_name));
+			expect(info.config.max_deliver).toBe(10);
+		});
+		await expect(
+			run(function* () {
+				const connection = yield* use_nats_connection({ servers: server.url });
+				const manager = yield* nats_jetstream_manager(connection);
+				yield* ensure_durable_nats_consumer(manager, stream_name, consumer_name, {
+					ack_policy: AckPolicy.None,
+				});
+			}),
+		).rejects.toThrow(/creation-only properties.*ack_policy \(existing "explicit", config "none"\)/);
 	});
 
 	it("updates the configuration on an existing stream", async () => {
@@ -264,14 +295,13 @@ describe("JetStream helpers", () => {
  * @returns The scoped consumer handle.
  */
 function* create_empty_consumer(connection: Parameters<typeof nats_jetstream>[0], stream_name: string) {
-	const durable_name = "worker";
+	const consumer_name = "worker";
 	const manager = yield* nats_jetstream_manager(connection);
 	yield* ensure_nats_stream(manager, stream_name, { subjects: [`${stream_name}.>`] });
-	yield* ensure_nats_consumer(manager, stream_name, durable_name, {
-		durable_name,
+	yield* ensure_durable_nats_consumer(manager, stream_name, consumer_name, {
 		ack_policy: AckPolicy.Explicit,
 	});
-	return yield* get_nats_consumer(connection, stream_name, durable_name);
+	return yield* get_nats_consumer(connection, stream_name, consumer_name);
 }
 
 describe("use_nats_consumer_messages teardown", () => {

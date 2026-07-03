@@ -33,7 +33,9 @@ import type {
 	ConsumeOptions,
 	Consumer,
 	ConsumerConfig,
+	ConsumerInfo,
 	ConsumerMessages,
+	ConsumerUpdateConfig,
 	JetStreamApiCodes as JetStreamApiCode,
 	JetStreamClient,
 	JetStreamManager,
@@ -185,41 +187,6 @@ function is_error_of_kind(thrown_value: unknown, error_classes: readonly ErrorCl
  */
 function is_jetstream_api_code(thrown_value: unknown, code: JetStreamApiCode): boolean {
 	return thrown_value instanceof JetStreamApiError && thrown_value.code === code;
-}
-
-/**
- * Assert that a stream name can be used in administrative helper operations.
- *
- * @param stream_name - The JetStream stream name supplied by the caller.
- * @returns Nothing when the stream name is non-empty.
- */
-function assert_stream_name(stream_name: string): void {
-	A.gt(stream_name.trim().length, 0, "stream_name must be non-empty");
-}
-
-/**
- * Assert that a consumer name can be used in administrative helper operations.
- *
- * @param consumer_name - The JetStream consumer or durable name supplied by the caller.
- * @returns Nothing when the consumer name is non-empty.
- */
-function assert_consumer_name(consumer_name: string): void {
-	A.gt(consumer_name.trim().length, 0, "consumer_name must be non-empty");
-}
-
-/**
- * Assert that a consumer creation config corresponds to the consumer being ensured.
- *
- * @param consumer_name - The consumer or durable name being looked up.
- * @param config - The consumer creation config passed to consumers.add().
- * @returns Nothing when any explicit name in the config matches consumer_name.
- */
-function assert_consumer_config_matches(consumer_name: string, config: Partial<ConsumerConfig>): void {
-	assert_consumer_name(consumer_name);
-	const configured_name = typeof config.durable_name === "string" ? config.durable_name : config.name;
-	if (typeof configured_name === "string") {
-		A(configured_name === consumer_name, "consumer config name must match consumer_name");
-	}
 }
 
 /**
@@ -495,30 +462,110 @@ export function* ensure_nats_stream(stream_manager: JetStreamManager, stream_nam
 }
 
 /**
- * Ensure that a JetStream consumer exists, creating it only when the server reports it missing.
+ * Every key of ConsumerUpdateConfig as a runtime value. TypeScript types are
+ * erased at runtime, so this is the only way to test key membership; the
+ * `satisfies` clause makes compilation fail here if a @nats-io/jetstream
+ * upgrade adds or removes updatable consumer properties.
+ */
+const consumer_update_config_keys = {
+	// From PriorityGroups, which ConsumerUpdateConfig extends
+	priority_groups: true,
+	priority_policy: true,
+	priority_timeout: true,
+	description: true,
+	ack_wait: true,
+	max_deliver: true,
+	sample_freq: true,
+	max_ack_pending: true,
+	max_waiting: true,
+	headers_only: true,
+	deliver_subject: true,
+	max_batch: true,
+	max_expires: true,
+	inactive_threshold: true,
+	backoff: true,
+	max_bytes: true,
+	num_replicas: true,
+	mem_storage: true,
+	filter_subject: true,
+	filter_subjects: true,
+	metadata: true,
+} satisfies Record<keyof ConsumerUpdateConfig, true>;
+
+/**
+ * Narrow a consumer creation config to the properties accepted by consumers.update().
+ *
+ * ConsumerUpdateConfig has fewer properties than ConsumerConfig:
+ * https://nats-io.github.io/nats.deno/interfaces/ConsumerUpdateConfig.html
+ * https://nats-io.github.io/nats.deno/interfaces/ConsumerConfig.html
+ *
+ * Creation-only properties (e.g. ack_policy) whose values match the existing
+ * consumer are dropped, keeping ensure_durable_nats_consumer() idempotent; one whose
+ * value differs throws, because the server cannot change it on an existing
+ * consumer and would reject the update with a less descriptive error.
+ *
+ * @param config - The consumer creation config passed to ensure_durable_nats_consumer().
+ * @param existing_config - The config reported by the server for the existing consumer.
+ * @returns The subset of config that consumers.update() can apply.
+ */
+function to_consumer_update_config(config: Partial<ConsumerConfig>, existing_config: ConsumerConfig): ConsumerUpdateConfig {
+	const update_config: Record<string, unknown> = {};
+	const conflicts: Array<string> = [];
+	for (const [key, value] of Object.entries(config)) {
+		if (value === undefined) {
+			continue;
+		}
+		if (key in consumer_update_config_keys) {
+			update_config[key] = value;
+		} else {
+			const existing_value = (existing_config as Record<string, unknown>)[key];
+			if (value !== existing_value) {
+				conflicts.push(`${key} (existing ${JSON.stringify(existing_value)}, config ${JSON.stringify(value)})`);
+			}
+		}
+	}
+	A(conflicts.length === 0, () => `consumer config sets creation-only properties that differ from the existing consumer; delete the consumer or match its config: ${conflicts.join(", ")}`);
+	return update_config as ConsumerUpdateConfig;
+}
+
+/**
+ * Ensure that a durable JetStream consumer exists, creating it only when the
+ * server reports it missing.
  *
  * @param stream_manager - The JetStream manager used for consumer administration.
  * @param stream_name - The stream containing the consumer.
- * @param consumer_name - The consumer or durable name to inspect.
- * @param config - The consumer creation config used only when the consumer is missing.
+ * @param consumer_name - The durable name of the consumer.
+ * @param config - The consumer config, which cannot carry its own `durable_name`
+ * or `name`: used in full at creation; when the consumer already exists, its
+ * updatable subset is applied and its creation-only properties must match the
+ * existing consumer.
  * @returns An operation that completes after the consumer exists.
  */
-export function* ensure_nats_consumer(
+export function* ensure_durable_nats_consumer(
 	stream_manager: JetStreamManager,
 	stream_name: string,
 	consumer_name: string,
-	config: Partial<ConsumerConfig>,
-): Operation<void> {
-	assert_stream_name(stream_name);
-	assert_consumer_config_matches(consumer_name, config);
+	config: Partial<Omit<ConsumerConfig, "durable_name" | "name">>,
+): Operation<ConsumerInfo> {
+	let exists = false;
+	let info;
 	try {
-		yield* until(stream_manager.consumers.info(stream_name, consumer_name));
+		info = yield* until(stream_manager.consumers.info(stream_name, consumer_name));
+		logger.info("found NATS JetStream consumer {consumer_name} for stream {stream_name}", { consumer_name, stream_name });
+		exists = true;
 	} catch (thrown_value) {
 		if (!is_jetstream_api_code(thrown_value, JetStreamApiCodes.ConsumerNotFound)) {
 			throw to_error(thrown_value);
 		}
-		yield* until(stream_manager.consumers.add(stream_name, config));
+		info = yield* until(stream_manager.consumers.add(stream_name, { ...config, durable_name: consumer_name }));
+		logger.info("created NATS JetStream consumer {consumer_name} for stream {stream_name}", { consumer_name, stream_name });
 	}
+	if (exists) {
+		const update_config = to_consumer_update_config(config, info.config);
+		info = yield* until(stream_manager.consumers.update(stream_name, consumer_name, update_config));
+		logger.info("updated NATS JetStream consumer {consumer_name} for stream {stream_name}", { consumer_name, stream_name });
+	}
+	return info;
 }
 
 /**
@@ -526,7 +573,7 @@ export function* ensure_nats_consumer(
  *
  * @param connection - A connection returned by use_nats_connection(), or a raw connection.
  * @param stream_name - The stream containing the consumer.
- * @param consumer_name - The consumer or durable name to retrieve.
+ * @param consumer_name - The consumer name.
  * @param options - JetStream client options accepted by @nats-io/jetstream jetstream().
  * @returns An operation yielding a scoped JetStream consumer handle.
  */
@@ -536,8 +583,6 @@ export function* get_nats_consumer(
 	consumer_name: string,
 	options: JetStreamOptions = {},
 ): Operation<ScopedNatsConsumer> {
-	assert_stream_name(stream_name);
-	assert_consumer_name(consumer_name);
 	const stream_client = nats_jetstream(connection, options);
 	const consumer = yield* acquire_with_discard(
 		() => stream_client.consumers.get(stream_name, consumer_name),
