@@ -18,7 +18,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { run, sleep, spawn, suspend, until } from "effection";
-import { AckPolicy } from "@nats-io/jetstream";
+import { AckPolicy, DeliverPolicy } from "@nats-io/jetstream";
 import { connect as node_connect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/transport-node";
 
@@ -30,6 +30,7 @@ import {
 	nats_jetstream_manager,
 	use_nats_connection,
 	use_nats_consumer_messages,
+	use_ordered_nats_consumer,
 } from "./nats.ts";
 
 interface TestNatsServer {
@@ -283,6 +284,68 @@ describe("JetStream helpers", () => {
 		});
 		expect(raw.isClosed()).toBe(true);
 		expect(() => nats_jetstream(raw)).toThrow(/closed NATS connection/);
+	});
+});
+
+describe("use_ordered_nats_consumer", () => {
+	it("skips the backlog with DeliverPolicy.New and deletes the consumer on scope exit", async () => {
+		const stream_name = unique_name("ordered_new");
+		const subject = `${stream_name}.events`;
+		const received = await run(function* () {
+			const connection = yield* use_nats_connection({ servers: server.url });
+			const manager = yield* nats_jetstream_manager(connection);
+			yield* ensure_nats_stream(manager, stream_name, { subjects: [subject] });
+			const client = nats_jetstream(connection);
+			// A durable consumer resuming its cursor would deliver this backlog.
+			yield* until(client.publish(subject, "stale 0"));
+			yield* until(client.publish(subject, "stale 1"));
+			const consumer = yield* use_ordered_nats_consumer(connection, stream_name, {
+				deliver_policy: DeliverPolicy.New,
+			});
+			const consumers = yield* until(manager.consumers.list(stream_name).next());
+			expect(consumers.length).toBe(1);
+			yield* until(client.publish(subject, "fresh"));
+			const messages = yield* use_nats_consumer_messages(consumer);
+			const result = yield* messages.next();
+			if (result.done) {
+				throw new Error("consumer stream ended before delivering a message");
+			}
+			return result.value.string();
+		});
+		expect(received).toBe("fresh");
+		await run(function* () {
+			const connection = yield* use_nats_connection({ servers: server.url });
+			const manager = yield* nats_jetstream_manager(connection);
+			const consumers = yield* until(manager.consumers.list(stream_name).next());
+			expect(consumers.length).toBe(0);
+		});
+	});
+
+	it("delivers a snapshot with DeliverPolicy.LastPerSubject", async () => {
+		const stream_name = unique_name("ordered_last_per_subject");
+		const received: string[] = [];
+		await run(function* () {
+			const connection = yield* use_nats_connection({ servers: server.url });
+			const manager = yield* nats_jetstream_manager(connection);
+			yield* ensure_nats_stream(manager, stream_name, { subjects: [`${stream_name}.>`] });
+			const client = nats_jetstream(connection);
+			yield* until(client.publish(`${stream_name}.alpha`, "alpha stale"));
+			yield* until(client.publish(`${stream_name}.alpha`, "alpha latest"));
+			yield* until(client.publish(`${stream_name}.beta`, "beta stale"));
+			yield* until(client.publish(`${stream_name}.beta`, "beta latest"));
+			const consumer = yield* use_ordered_nats_consumer(connection, stream_name, {
+				deliver_policy: DeliverPolicy.LastPerSubject,
+			});
+			const messages = yield* use_nats_consumer_messages(consumer);
+			while (received.length < 2) {
+				const result = yield* messages.next();
+				if (result.done) {
+					throw new Error("consumer stream ended before delivering the snapshot");
+				}
+				received.push(result.value.string());
+			}
+		});
+		expect(received).toEqual(["alpha latest", "beta latest"]);
 	});
 });
 

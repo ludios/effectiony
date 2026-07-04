@@ -42,6 +42,7 @@ import type {
 	JetStreamManagerOptions,
 	JetStreamOptions,
 	JsMsg,
+	OrderedConsumerOptions,
 	StreamInfo,
 	StreamUpdateConfig,
 } from "@nats-io/jetstream";
@@ -590,6 +591,89 @@ export function* get_nats_consumer(
 		"nats.consumer.get",
 	);
 	return create_scoped_consumer(consumer);
+}
+
+/**
+ * Delete an ephemeral consumer whose creation completed after its Effection
+ * acquisition was discarded.
+ *
+ * @param consumer - A consumer whose caller has already left the acquiring scope.
+ * @returns Nothing; rejection is intentionally suppressed because no scope owns it.
+ */
+function delete_discarded_consumer(consumer: Consumer): void {
+	try {
+		void consumer.delete().catch(() => {});
+	} catch {
+		// A discarded acquisition has no remaining scope to report cleanup failures to.
+	}
+}
+
+/**
+ * Delete an ephemeral consumer on scope exit, best effort.
+ *
+ * Deletion is a courtesy to the server: the consumer's inactive_threshold
+ * already guarantees cleanup, so a failure here (the server expired it first,
+ * the connection is gone) must not fail an otherwise-clean scope or mask the
+ * error already unwinding it.
+ *
+ * @param consumer - The raw ephemeral consumer to delete.
+ * @param stream_name - The stream the consumer belongs to, for logging.
+ * @returns An operation that completes once the deletion attempt settles.
+ */
+function* delete_ephemeral_consumer(consumer: Consumer, stream_name: string): Operation<void> {
+	try {
+		yield* until(consumer.delete());
+		logger.info("deleted ephemeral NATS JetStream consumer for stream {stream_name}", { stream_name });
+	} catch (thrown_value) {
+		logger.debug("could not delete ephemeral NATS JetStream consumer for stream {stream_name}, leaving it to inactive_threshold: {thrown_value}", { stream_name, thrown_value });
+	}
+}
+
+/**
+ * Create an ordered (ephemeral) JetStream consumer and scope its lifetime.
+ *
+ * An ordered consumer is the ephemeral counterpart to the durable consumers
+ * managed by ensure_durable_nats_consumer(): the server names it, forces
+ * ack-none delivery, and the client transparently recreates it if delivery
+ * becomes inconsistent. Because no cursor outlives the acquisition, every
+ * acquisition starts at the position described by `deliver_policy` — use this
+ * for snapshot-style subjects where only current data matters, and a durable
+ * consumer would replay a backlog accumulated while the process was down.
+ *
+ * The server-side consumer is deleted when the acquiring scope exits; if that
+ * fails, the server expires it after `inactive_threshold` (default five
+ * minutes). Note that `ordered_options.inactive_threshold` is in
+ * milliseconds, unlike the nanoseconds of ConsumerConfig.
+ *
+ * @param connection - A connection returned by use_nats_connection(), or a raw connection.
+ * @param stream_name - The stream to consume.
+ * @param ordered_options - Ordered consumer options, e.g. `deliver_policy`
+ * and `filter_subjects`; an empty config delivers every message currently in
+ * the stream and onward.
+ * @param options - JetStream client options accepted by @nats-io/jetstream jetstream().
+ * @returns An operation yielding a scoped JetStream consumer handle whose
+ * server-side consumer lives until the acquiring scope exits.
+ */
+export function use_ordered_nats_consumer(
+	connection: ScopedNatsConnection | NatsConnection,
+	stream_name: string,
+	ordered_options: Partial<OrderedConsumerOptions> = {},
+	options: JetStreamOptions = {},
+): Operation<ScopedNatsConsumer> {
+	return resource(function* (provide) {
+		const stream_client = nats_jetstream(connection, options);
+		const consumer = yield* acquire_with_discard(
+			() => stream_client.consumers.get(stream_name, ordered_options),
+			delete_discarded_consumer,
+			"nats.consumer.ordered",
+		);
+		logger.info("created ephemeral NATS JetStream consumer for stream {stream_name}", { stream_name });
+		try {
+			yield* provide(create_scoped_consumer(consumer));
+		} finally {
+			yield* delete_ephemeral_consumer(consumer, stream_name);
+		}
+	});
 }
 
 interface TrackedConsumerMessages {
