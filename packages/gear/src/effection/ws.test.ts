@@ -4,14 +4,14 @@
  * End-to-end tests of ws-effection against real sockets on 127.0.0.1.
  */
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { A } from "ayy";
-import { call, createChannel, createSignal, each, run, scoped, sleep, spawn, withResolvers } from "effection";
+import { call, createChannel, createSignal, each, run, scoped, sleep, spawn, suspend, withResolvers } from "effection";
 import type { Operation, Stream } from "effection";
 import { WebSocket } from "ws";
 import type { AddressInfo } from "node:net";
 import { forward, heartbeat, serve, use_connection, use_web_socket_server } from "./ws.ts";
-import type { WsClose, WsConnection, WsServer } from "./ws.ts";
+import type { WsClose, WsConnection, WsServer, WsServerOptions } from "./ws.ts";
 
 /**
  * Extract the bound TCP port of a server.
@@ -253,5 +253,81 @@ describe("ws-effection", () => {
 			A(!reply.done, "server closed the survivor's connection");
 			expect(String(reply.value.data)).toBe("still-alive");
 		});
+	});
+
+	test("shutdown closes a client that was never vended to an accept loop", async () => {
+		// No accept loop anywhere: the client sits accepted by ws but never
+		// handed to anyone. Shutdown must still close it with 1001.
+		const observed = await run(function* () {
+			const port_box    = withResolvers<number>("server port");
+			const closed      = withResolvers<WsClose>("unvended client closed");
+			const server_task = yield* spawn(() =>
+				scoped(function* () {
+					const server = yield* use_web_socket_server({ port: 0 });
+					port_box.resolve(port_of(server));
+					yield* suspend();
+				}),
+			);
+			const port = yield* port_box.operation;
+			yield* spawn(function* () {
+				const client = yield* use_client(port);
+				closed.resolve(yield* drain_text(client, []));
+			});
+			yield* sleep(50); // connected, tracked by ws, never vended
+			yield* server_task.halt();
+			return yield* closed.operation;
+		});
+		expect(observed.code).toBe(1001);
+		expect(String(observed.reason)).toBe("server shutting down");
+	});
+
+	test("a throwing on_error is reported on stderr and the server keeps serving", async () => {
+		const console_error = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			await run(function* () {
+				const server = yield* use_web_socket_server({ port: 0 });
+				yield* spawn(() =>
+					serve(server, function* (connection) {
+						for (const message of yield* each(connection)) {
+							if (String(message.data) === "boom") {
+								throw new Error("handler crash");
+							}
+							yield* connection.send(message.data);
+							yield* each.next();
+						}
+					}, { on_error: () => {
+						throw new Error("observer crash");
+					} }),
+				);
+				const port   = port_of(server);
+				const victim = yield* use_client(port);
+				yield* victim.send("boom");
+				yield* drain_text(victim, []);
+				const survivor     = yield* use_client(port);
+				const subscription = yield* survivor;
+				yield* survivor.send("still-alive");
+				const reply = yield* subscription.next();
+				A(!reply.done, "server closed the survivor's connection");
+				expect(String(reply.value.data)).toBe("still-alive");
+			});
+			expect(console_error).toHaveBeenCalledWith(
+				"ws-effection: serve() on_error callback threw",
+				expect.objectContaining({ message: "observer crash" }),
+			);
+		} finally {
+			console_error.mockRestore();
+		}
+	});
+
+	test("clientTracking: false is rejected — shutdown depends on ws client tracking", () => {
+		const options = { port: 0, clientTracking: false } as unknown as WsServerOptions;
+		expect(() => use_web_socket_server(options)).toThrow(/client tracking/);
+	});
+
+	test("nonsense timing options are rejected", () => {
+		expect(() => heartbeat({} as WsConnection, { period: 0 })).toThrow(/positive number of milliseconds/);
+		expect(() => heartbeat({} as WsConnection, { period: NaN })).toThrow(/positive number of milliseconds/);
+		expect(() => use_connection({} as never, { close_timeout: -1 })).toThrow(/non-negative number of milliseconds/);
+		expect(() => use_web_socket_server({ port: 0, shutdown_timeout: NaN })).toThrow(/non-negative number of milliseconds/);
 	});
 });

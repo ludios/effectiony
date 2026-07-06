@@ -43,10 +43,13 @@
  *   - `serve()` wraps the accept loop: one spawned task per client, socket
  *     ownership established before the next accept, per-connection errors
  *     isolated from the server.
- *   - Fan-out ("pipe one Stream to many clients") needs no new machinery:
- *     Effection Signals/Channels are already multicast — every subscriber
- *     gets its own queue — so each connection task subscribes to the same
- *     shared stream and `forward()`s it into its socket.
+ *   - Fan-out ("pipe one stream to many clients") needs no new machinery,
+ *     but the shared source must itself be multicast: Effection Signals and
+ *     Channels are (every subscriber gets its own queue), so each connection
+ *     task subscribes to the same Signal/Channel and `forward()`s it into its
+ *     socket. An arbitrary Stream is NOT multicast — a `forward()` per client
+ *     would re-run its upstream work once per subscription — so fan a plain
+ *     stream out by pumping it into a Signal/Channel hub first.
  */
 
 import {
@@ -157,12 +160,21 @@ export interface WsConnectionRequest {
 export interface WsServer extends Stream<WsConnectionRequest, never> {
 	/** Escape hatch to the underlying `WebSocketServer`. */
 	socket_server: WebSocketServer;
-	/** Bound address of the underlying HTTP server (null before listening, string for pipes). */
+	/**
+	 * Bound address of the underlying HTTP server (null before listening or
+	 * after close, string for pipes). Passes through to `ws`, which throws in
+	 * `noServer` mode — there is no address to report there.
+	 */
 	address(): AddressInfo | string | null;
 }
 
-/** Options for {@link use_web_socket_server}: everything `ws` accepts, plus shutdown policy. */
-export interface WsServerOptions extends ServerOptions {
+/**
+ * Options for {@link use_web_socket_server}: everything `ws` accepts (except
+ * `clientTracking`, which must stay on: shutdown enumerates `wss.clients` to
+ * close every live client, and without it a server with connected clients
+ * never finishes tearing down), plus shutdown policy.
+ */
+export interface WsServerOptions extends Omit<ServerOptions, "clientTracking"> {
 	/** Milliseconds to wait for graceful client closes on teardown before `terminate()`; default 3000. */
 	shutdown_timeout?: number;
 	/** Close code sent to still-open clients on teardown; default 1001 (going away). */
@@ -180,9 +192,12 @@ export interface ForwardOptions<T> {
 	encode?: (item: T) => SendData;
 	/**
 	 * Slow-peer policy. "await" (default) waits for each frame to flush, so a
-	 * slow peer only slows its own forwarder. "drop" and "close" never wait:
-	 * once `buffered_amount` exceeds `high_water_mark`, "drop" discards items
-	 * and "close" disconnects the peer with 1013 (try again later).
+	 * slow peer only slows its own forwarder — but note that while it waits,
+	 * a multicast source (Signal/Channel) keeps growing that subscriber's
+	 * queue without bound, so a peer that lags forever costs memory. "drop"
+	 * and "close" never wait, and thereby bound the queue: once
+	 * `buffered_amount` exceeds `high_water_mark`, "drop" discards items and
+	 * "close" disconnects the peer with 1013 (try again later).
 	 */
 	mode?: "await" | "drop" | "close";
 	/** Byte threshold for the "drop"/"close" modes; default 1 MiB. */
@@ -195,8 +210,11 @@ export interface ServeOptions {
 	connection?: ConnectionOptions;
 	/**
 	 * Called when a handler task fails; the failed client's socket is closed
-	 * by its resource regardless, and the server keeps serving. Default: the
-	 * error is discarded — supply a callback if you want to observe crashes.
+	 * by its resource regardless, and the server keeps serving. If the
+	 * callback itself throws, that error is reported on stderr and otherwise
+	 * ignored — an error observer must not become a server error. Default:
+	 * the error is discarded — supply a callback if you want to observe
+	 * crashes.
 	 */
 	on_error?: (error: unknown, request: IncomingMessage) => void;
 }
@@ -221,6 +239,15 @@ function assert(condition: boolean, message: string): asserts condition {
 		throw new Error(`ws-effection invariant violated: ${message}`);
 	}
 }
+
+/**
+ * Listener/callback that deliberately ignores an error. A bare `error`
+ * emission on an EventEmitter with no listener kills the whole process, so
+ * the resources here keep one of these attached for their entire lifetime
+ * (deliberate crash semantics come from watcher tasks instead); it also
+ * discards send-callback errors in fire-and-forget send modes.
+ */
+function ignore_error(): void {}
 
 /**
  * Stream the arguments of every emission of `event` on a Node EventEmitter.
@@ -314,16 +341,12 @@ export function use_connection(
 		close_reason  = "resource released",
 		close_timeout = 3_000,
 	} = options;
+	assert(Number.isFinite(close_timeout) && close_timeout >= 0, `close_timeout must be a non-negative number of milliseconds (got ${close_timeout})`);
 	return resource(function* (provide) {
 		const messages = createQueue<WsMessage, WsClose>();
 		const closed   = withResolvers<WsClose>("socket closed");
 		let   watcher: Task<void> | undefined;
-		// A bare `error` emission on an EventEmitter with no listener kills the
-		// whole process; keep a swallowing listener attached for the entire
-		// lifetime, including teardown. Deliberate crash semantics are provided
-		// by the watcher task below instead.
-		const swallow_error = () => {};
-		const on_message    = (data: RawData, is_binary: boolean) => {
+		const on_message = (data: RawData, is_binary: boolean) => {
 			messages.add({ data, is_binary });
 		};
 		const on_close = (code: number, reason: Buffer) => {
@@ -331,7 +354,7 @@ export function use_connection(
 			messages.close(info);
 			closed.resolve(info);
 		};
-		socket.on("error",   swallow_error);
+		socket.on("error",   ignore_error);
 		socket.on("message", on_message);
 		socket.on("close",   on_close);
 		try {
@@ -367,6 +390,7 @@ export function use_connection(
 					flushed((done) => {
 						socket.ping(data, undefined, done);
 					}),
+				// oxlint-disable-next-line require-yield -- effection Stream contract: a generator Operation that completes immediately with the subscription
 				*[Symbol.iterator]() {
 					assert(!vended, "a WsConnection carries one buffered message queue and supports a single subscription");
 					vended = true;
@@ -398,7 +422,7 @@ export function use_connection(
 					]);
 				}
 			} finally {
-				socket.off("error",   swallow_error);
+				socket.off("error",   ignore_error);
 				socket.off("message", on_message);
 				socket.off("close",   on_close);
 			}
@@ -425,6 +449,7 @@ export function heartbeat(
 	options: HeartbeatOptions = {},
 ): Operation<void> {
 	const { period = 30_000 } = options;
+	assert(Number.isFinite(period) && period > 0, `heartbeat period must be a positive number of milliseconds (got ${period})`);
 	return call(function* () {
 		const socket  = connection.socket;
 		let   alive   = true;
@@ -456,10 +481,13 @@ export function heartbeat(
  * Pump every item of `source` into `connection` until the source completes,
  * the peer disconnects, or (in "close" mode) the peer falls too far behind.
  *
- * Because Effection signals/channels are multicast, broadcasting is just
+ * Because Effection Signals/Channels are multicast, broadcasting is just
  * running one `forward(shared, connection)` per client task over the same
- * shared stream — each subscriber has an independent queue, so a slow client
- * back-pressures only itself.
+ * shared Signal/Channel — each subscriber has an independent queue, so a
+ * slow client back-pressures only itself (see {@link ForwardOptions.mode}
+ * for what that costs). This shape needs the source to be multicast; passing
+ * one plain Stream to several `forward()` calls instead re-runs its upstream
+ * work once per subscription.
  *
  * @param source - the stream to transmit
  * @param connection - the destination peer
@@ -477,7 +505,6 @@ export function forward<T>(
 		high_water_mark = 1 << 20,
 	} = options;
 	assert(high_water_mark > 0, "high_water_mark must be positive");
-	const discard_send_error = () => {};
 	const pump = call(function* () {
 		for (const item of yield* each(source)) {
 			if (connection.ready_state !== WebSocket.OPEN) {
@@ -486,7 +513,7 @@ export function forward<T>(
 			if (mode === "await") {
 				yield* connection.send(encode(item));
 			} else if (connection.buffered_amount <= high_water_mark) {
-				connection.socket.send(encode(item), discard_send_error);
+				connection.socket.send(encode(item), ignore_error);
 			} else if (mode === "close") {
 				connection.socket.close(1013, "backpressure limit exceeded");
 				return;
@@ -540,7 +567,11 @@ export function serve(
 					claimed.resolve();
 					yield* handler(connection, request);
 				} catch (error) {
-					on_error(error, request);
+					try {
+						on_error(error, request);
+					} catch (observer_error) {
+						console.error("ws-effection: serve() on_error callback threw", observer_error);
+					}
 				} finally {
 					claimed.resolve(); // idempotent; unblocks the accept loop on instant failure
 				}
@@ -574,11 +605,11 @@ export function serve(
  *     // read loop / forward / heartbeat here
  *   });
  *
- * @param options - all `ws` ServerOptions plus shutdown policy
+ * @param options - `ws` ServerOptions (client tracking required) plus shutdown policy
  * @returns an operation yielding the accept stream
  */
 export function use_web_socket_server(
-	options: WsServerOptions = {},
+	options: WsServerOptions,
 ): Operation<WsServer> {
 	const {
 		shutdown_timeout = 3_000,
@@ -586,21 +617,23 @@ export function use_web_socket_server(
 		shutdown_reason  = "server shutting down",
 		...server_options
 	} = options;
+	assert(
+		(server_options as ServerOptions).clientTracking !== false,
+		"client tracking must stay on: shutdown enumerates wss.clients to close every live client",
+	);
+	assert(Number.isFinite(shutdown_timeout) && shutdown_timeout >= 0, `shutdown_timeout must be a non-negative number of milliseconds (got ${shutdown_timeout})`);
 	return resource(function* (provide) {
 		const wss           = new WebSocketServer(server_options);
 		const pending       = createQueue<WsConnectionRequest, never>();
 		let   watcher: Task<void> | undefined;
-		const backlog       = new Set<WebSocket>(); // accepted by ws, not yet vended to the accept loop
 		const wss_closed    = withResolvers<void>("server closed");
-		const swallow_error = () => {};
 		const on_connection = (socket: WebSocket, request: IncomingMessage) => {
-			backlog.add(socket);
 			pending.add({ socket, request });
 		};
 		const on_wss_close = () => {
 			wss_closed.resolve();
 		};
-		wss.on("error",      swallow_error);
+		wss.on("error",      ignore_error);
 		wss.on("connection", on_connection);
 		wss.on("close",      on_wss_close);
 		try {
@@ -618,16 +651,11 @@ export function use_web_socket_server(
 				throw error;
 			});
 			let vended = false;
-			const subscription: Subscription<WsConnectionRequest, never> = {
-				*next() {
-					const item = yield* pending.next();
-					backlog.delete(item.value.socket);
-					return item;
-				},
-			};
+			const subscription: Subscription<WsConnectionRequest, never> = { next: pending.next };
 			yield* provide({
 				socket_server: wss,
 				address: () => wss.address(),
+				// oxlint-disable-next-line require-yield -- effection Stream contract: a generator Operation that completes immediately with the subscription
 				*[Symbol.iterator]() {
 					assert(!vended, "a WsServer carries one buffered accept queue and supports a single accept loop");
 					vended = true;
@@ -639,14 +667,20 @@ export function use_web_socket_server(
 				if (watcher !== undefined) {
 					yield* watcher.halt();
 				}
+				// No accept race here: this block runs synchronously through
+				// `wss.close()`, so no `connection` event can slip in after the
+				// listener detaches, and `ws` aborts (503) any upgrade that
+				// completes after close() flips its state to CLOSING.
 				wss.off("connection", on_connection);
 				// Effection v4 destroys children in creation order, so this
 				// resource usually unwinds BEFORE sibling tasks that own the
 				// accepted connections. Whole-server shutdown therefore closes
 				// every still-open client here with `shutdown_code`; the
 				// per-connection close code applies when an individual handler
-				// exits while the server lives on.
-				for (const socket of wss.clients ?? backlog) {
+				// exits while the server lives on. `wss.clients` covers vended
+				// and not-yet-vended sockets alike (hence the constructor-time
+				// requirement that client tracking stays on).
+				for (const socket of wss.clients) {
 					if (socket.readyState === WebSocket.OPEN) {
 						socket.close(shutdown_code, shutdown_reason);
 					}
@@ -656,14 +690,14 @@ export function use_web_socket_server(
 					wss_closed.operation,
 					call(function* () {
 						yield* sleep(shutdown_timeout);
-						for (const socket of wss.clients ?? []) {
+						for (const socket of wss.clients) {
 							socket.terminate();
 						}
 						return yield* wss_closed.operation;
 					}),
 				]);
 			} finally {
-				wss.off("error", swallow_error);
+				wss.off("error", ignore_error);
 				wss.off("close", on_wss_close);
 			}
 		}
