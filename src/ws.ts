@@ -3,36 +3,7 @@
  * ws-effection — structured-concurrency bindings for the `ws` library
  * (https://github.com/websockets/ws) on top of Effection v4.
  *
- * Basic example — remind every connected client, once a second, that
- * they're still here:
- *
- *   import { main, sleep } from "effection";
- *   import { serve, use_web_socket_server } from "@sophon/gear/effection/ws";
- *
- *   await main(function* () {
- *     const server = yield* use_web_socket_server({ port: 8080 });
- *     console.log("listening");
- *     yield* serve(server, function* (connection, request) {
- *       // Runs as its own task, once per client. When the peer disconnects,
- *       // the pending send fails and serve() ends just this task; the
- *       // server keeps accepting others. The finally also runs when the
- *       // whole server shuts down and halts this task.
- *       const ip = request.socket.remoteAddress;
- *       console.log(`${ip} connected`);
- *       try {
- *         for (;;) {
- *           yield* connection.send(`you're still there, ${ip}`);
- *           yield* sleep(1_000);
- *         }
- *       } finally {
- *         console.log(`${ip} disconnected`);
- *       }
- *     });
- *   });
- * 
- * Connect with:
- * 
- *   wscat --connect ws://127.0.0.1:8080
+ * See dev/ws-demo.ts for a basic example.
  *
  * Model:
  *   - `use_web_socket_server()` is a resource yielding a Stream of raw
