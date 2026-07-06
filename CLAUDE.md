@@ -2,7 +2,7 @@
 
 Welcome. You're on a NixOS 26.05 machine where many things are already installed, including:
 
-ripgrep, ripgrep-all, node, deno, pnpm, jq, python3, uv, google-chrome, curl-impersonate, gcc, go, rustc, cargo, patchelf, zip, unzip, zstd.
+ripgrep, ripgrep-all, node, deno, pnpm, jq, python3, uv, natscli (bin: nats), nats-server, psql, ephemeralpg (bin: pg_tmp), google-chrome, curl-impersonate, gcc, go, rustc, cargo, patchelf, zip, unzip, zstd.
 
 # Avoid consuming tokens in excess
 
