@@ -1,6 +1,27 @@
+// Model-output: Claude Fable 5
 /**
  * ws-effection — structured-concurrency bindings for the `ws` library
  * (https://github.com/websockets/ws) on top of Effection v4.
+ *
+ * Basic example — remind every connected client, once a second, that
+ * they're still here:
+ *
+ *   import { main, sleep } from "effection";
+ *   import { serve, use_web_socket_server } from "@sophon/gear/effection/ws";
+ *
+ *   await main(function* () {
+ *     const server = yield* use_web_socket_server({ port: 8080 });
+ *     yield* serve(server, function* (connection, request) {
+ *       // Runs as its own task, once per client. When the peer disconnects,
+ *       // the pending send fails and serve() ends just this task; the
+ *       // server keeps accepting others.
+ *       const ip = request.socket.remoteAddress;
+ *       for (;;) {
+ *         yield* connection.send(`you're still there, ${ip}`);
+ *         yield* sleep(1_000);
+ *       }
+ *     });
+ *   });
  *
  * Model:
  *   - `use_web_socket_server()` is a resource yielding a Stream of raw
