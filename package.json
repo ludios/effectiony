@@ -2,6 +2,7 @@
 	"name": "effectiony",
 	"version": "1.0.0",
 	"description": "Some more effection integrations",
+    "license": "MIT",
 	"exports": {
 		".": "./src/index.ts",
 		"./*": "./src/*.ts"
