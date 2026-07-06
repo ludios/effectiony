@@ -1,14 +1,13 @@
 /**
  * End-to-end exercise of ws-effection against real sockets on 127.0.0.1.
- * Run: npx tsx test.ts
  */
 
 import { call, createChannel, createSignal, each, main, scoped, sleep, spawn, withResolvers } from "effection";
 import type { Operation, Stream, Task } from "effection";
 import { WebSocket } from "ws";
 import type { AddressInfo } from "node:net";
-import { forward, heartbeat, serve, use_connection, use_web_socket_server } from "./ws-effection.ts";
-import type { WsClose, WsConnection, WsServer } from "./ws-effection.ts";
+import { forward, heartbeat, serve, use_connection, use_web_socket_server } from "./ws.ts";
+import type { WsClose, WsConnection, WsServer } from "./ws.ts";
 
 /**
  * Assert a test expectation.
