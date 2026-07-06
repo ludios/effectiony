@@ -49,6 +49,11 @@
 		"no-await-in-loop": "off",
 		// https://oxc.rs/docs/guide/usage/linter/rules/vitest/require-mock-type-parameters.html
 		// We might want to enable this in the future if we fix everything.
-		"vitest/require-mock-type-parameters": "off"
+		"vitest/require-mock-type-parameters": "off",
+		"@logtape/prefer-lazy-evaluation": "warn",
+		"@logtape/no-unawaited-log": "error",
+		"@logtape/require-meta-sink": "warn",
+		// We know; sometimes we need to interpolate to pluralize a word.
+		"@logtape/no-message-interpolation": "off"
 	}
 }
