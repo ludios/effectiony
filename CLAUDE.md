@@ -55,6 +55,7 @@ Minutae:
 # Libraries to use
 
 - `ayy` to assert things when it's okay to raise `AssertionError` instead of a domain-specific error.
+- `logtape` for logging. Logs teach us about anomalies and the causes of things; log what a human operator would probably be interested in when observing the system.
 - `effection`. We like structured programming and async/await is lacking; prefer to write an Operation instead of a Promise-returning function (unless needed).
 
 For unit tests:
