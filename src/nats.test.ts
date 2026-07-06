@@ -48,7 +48,7 @@ interface TestNatsServer {
  * removes its temp directory.
  */
 async function start_nats_server(): Promise<TestNatsServer> {
-	const directory = await mkdtemp(join(tmpdir(), "sophon-nats-test-"));
+	const directory = await mkdtemp(join(tmpdir(), "effectiony-nats-test-"));
 	const child: ChildProcess = spawn_child(
 		"nats-server",
 		["-a", "127.0.0.1", "-p", "-1", "-js", "-sd", join(directory, "jetstream"), "--ports_file_dir", directory],

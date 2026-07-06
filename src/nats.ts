@@ -47,7 +47,7 @@ import type {
 	StreamUpdateConfig,
 } from "@nats-io/jetstream";
 import { getLogger } from "@logtape/logtape";
-const logger = getLogger(["sophon", "gear"]);
+const logger = getLogger(["effectiony", "nats"]);
 
 type SettleState = "pending" | "settled" | "discarded";
 type ErrorClass = Function & { readonly prototype: Error; readonly name: string };
