@@ -1,0 +1,32 @@
+{
+	"name": "effectiony",
+	"version": "1.0.0",
+	"description": "Some more effection integrations",
+	"exports": {
+		".": "./src/index.ts",
+		"./*": "./src/*.ts"
+	},
+	"imports": {
+		"#core/*": "./src/*.ts"
+	},
+	"scripts": {
+		"check": "tsc -p tsconfig.json"
+	},
+	"type": "module",
+	"dependencies": {
+		"@effectionx/timebox": "^0.4.3",
+		"@nats-io/jetstream": "^3.4.0",
+		"@nats-io/transport-node": "^3.4.0",
+		"@logtape/logtape": "^2.2.3",
+		"ayy": "^4.1.0",
+		"effection": "^4.0.3",
+		"ws": "^8.21.0"
+	},
+	"devDependencies": {
+		"@types/node": "^26.1.0",
+		"@types/ws": "^8.18.1",
+		"@vitest/coverage-v8": "^4.1.9",
+		"fast-check": "^4.8.0",
+		"vitest": "^4.1.9"
+	}
+}
