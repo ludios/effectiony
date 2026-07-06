@@ -1,0 +1,10 @@
+/.stfolder
+/.stignore
+/.claude
+.DS_Store
+node_modules
+/build
+/package
+.env
+.env.*
+!.env.example
