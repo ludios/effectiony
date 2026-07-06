@@ -1,3 +1,11 @@
+#!/usr/bin/env node
+
+/**
+ * Run this with node and connect clients with:
+ *
+ *   wscat --connect ws://127.0.0.1:8080
+ */
+
 import { main, sleep } from "effection";
 import { serve, use_web_socket_server } from "../src/ws.ts";
 
