@@ -2,7 +2,7 @@
 	"name": "effectiony",
 	"version": "1.0.0",
 	"description": "Some more effection integrations",
-    "license": "MIT",
+	"license": "MIT",
 	"exports": {
 		".": "./src/index.ts",
 		"./*": "./src/*.ts"
@@ -11,23 +11,29 @@
 		"#core/*": "./src/*.ts"
 	},
 	"scripts": {
-		"check": "tsc -p tsconfig.json"
+		"test": "vitest run",
+		"check": "tsc -p tsconfig.json",
+		"lint": "oxlint",
+		"lint:fix": "oxlint --fix"
 	},
 	"type": "module",
 	"dependencies": {
 		"@effectionx/timebox": "^0.4.3",
 		"@nats-io/jetstream": "^3.4.0",
 		"@nats-io/transport-node": "^3.4.0",
-		"@logtape/logtape": "^2.2.3",
 		"ayy": "^4.1.0",
 		"effection": "^4.0.3",
 		"ws": "^8.21.0"
 	},
 	"devDependencies": {
+		"@logtape/lint": "^2.2.3",
+		"@logtape/logtape": "^2.2.3",
 		"@types/node": "^26.1.0",
 		"@types/ws": "^8.18.1",
 		"@vitest/coverage-v8": "^4.1.9",
 		"fast-check": "^4.8.0",
+		"oxlint": "^1.72.0",
+		"typescript": "^6.0.3",
 		"vitest": "^4.1.9"
 	}
 }
