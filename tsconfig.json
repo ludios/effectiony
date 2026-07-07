@@ -10,6 +10,8 @@
 
 		"rootDir": "src",
 		"outDir": "dist",
+		// Generate d.ts files
+		"declaration": true,
 
 		"skipLibCheck": true,
 
