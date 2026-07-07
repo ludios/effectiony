@@ -4,14 +4,14 @@
 	"description": "Some more effection integrations",
 	"license": "MIT",
 	"exports": {
-		".": "./src/index.ts",
-		"./*": "./src/*.ts"
+		"./*": "./dist/*"
 	},
 	"imports": {
 		"#core/*": "./src/*.ts"
 	},
 	"scripts": {
 		"test": "vitest run",
+		"build": "./node_modules/.bin/tsc",
 		"check": "tsc -p tsconfig.json",
 		"lint": "oxlint",
 		"lint:fix": "oxlint --fix"
