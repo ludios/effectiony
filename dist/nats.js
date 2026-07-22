@@ -2,6 +2,7 @@
 // Model-output: ChatGPT 5.5 Pro
 // Model-output: Claude Opus 4.8
 // Model-output: Claude Fable 5
+// Model-output: Claude Fable 5
 /**
  * Effection resources for NATS connections and JetStream helpers.
  *
@@ -596,12 +597,11 @@ function start_iterator_return(tracked_messages) {
     if (tracked_messages.return_promise) {
         return tracked_messages.return_promise;
     }
-    const return_iterator = tracked_messages.iterator.return;
-    if (!return_iterator) {
+    if (!tracked_messages.iterator.return) {
         return null;
     }
     tracked_messages.return_promise = Promise.resolve()
-        .then(() => return_iterator.call(tracked_messages.iterator))
+        .then(() => tracked_messages.iterator.return?.())
         .then(() => undefined);
     return tracked_messages.return_promise;
 }

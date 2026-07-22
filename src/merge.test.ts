@@ -27,7 +27,7 @@ function from_values<T>(...values: T[]): Stream<T, void> {
 				q.add(v);
 			}
 			q.close(undefined);
-			return q as Subscription<T, void>;
+			return q;
 		},
 	};
 }

@@ -9,7 +9,7 @@ import { A } from "ayy";
 import { call, createChannel, createSignal, each, run, scoped, sleep, spawn, suspend, withResolvers } from "effection";
 import type { Operation, Stream } from "effection";
 import { WebSocket } from "ws";
-import type { AddressInfo } from "node:net";
+import type { RawData } from "ws";
 import { forward, heartbeat, serve, use_connection, use_web_socket_server } from "./ws.ts";
 import type { WsClose, WsConnection, WsServer, WsServerOptions } from "./ws.ts";
 
@@ -23,7 +23,17 @@ function port_of(server: WsServer): number {
 	if (address === null || typeof address === "string") {
 		throw new Error(`expected an AddressInfo, got ${String(address)}`);
 	}
-	return (address as AddressInfo).port;
+	return address.port;
+}
+
+/**
+ * Decode a message payload these tests know arrives as a single text frame.
+ * @param data - raw payload of a received message
+ * @returns the payload as UTF-8 text
+ */
+function text(data: RawData): string {
+	A(Buffer.isBuffer(data), "expected a single-Buffer frame");
+	return data.toString("utf8");
 }
 
 /**
@@ -47,7 +57,7 @@ function drain_text(connection: WsConnection, into: string[]): Operation<WsClose
 		const subscription = yield* connection;
 		let   next         = yield* subscription.next();
 		while (!next.done) {
-			into.push(String(next.value.data));
+			into.push(text(next.value.data));
 			next = yield* subscription.next();
 		}
 		return next.value;
@@ -75,13 +85,13 @@ describe("ws-effection", () => {
 			yield* client.send("hello");
 			const reply = yield* subscription.next();
 			A(!reply.done, "connection closed before the echo reply");
-			expect(String(reply.value.data)).toBe("hello");
+			expect(text(reply.value.data)).toBe("hello");
 		});
 	});
 
 	test("one shared stream fans out to all clients; a slow client only slows itself", async () => {
 		await run(function* () {
-			const hub    = createSignal<string, never>(); // the "same effection Stream", multicast
+			const hub    = createSignal<string>(); // the "same effection Stream", multicast
 			const joins  = createChannel<void>();
 			const server = yield* use_web_socket_server({ port: 0 });
 			yield* spawn(function* () {
@@ -118,7 +128,7 @@ describe("ws-effection", () => {
 						if (next.done) {
 							break;
 						}
-						into.push(String(next.value.data));
+						into.push(text(next.value.data));
 						if (delay_ms > 0) {
 							yield* sleep(delay_ms);
 						}
@@ -165,7 +175,7 @@ describe("ws-effection", () => {
 					yield* serve(server, function* (connection) {
 						const subscription = yield* connection;
 						let next = yield* subscription.next();
-						while (!next.done && String(next.value.data) !== "bye") {
+						while (!next.done && text(next.value.data) !== "bye") {
 							next = yield* subscription.next();
 						}
 						// handler returns; the connection resource closes this client
@@ -227,7 +237,7 @@ describe("ws-effection", () => {
 			yield* spawn(() =>
 				serve(server, function* (connection) {
 					for (const message of yield* each(connection)) {
-						if (String(message.data) === "boom") {
+						if (text(message.data) === "boom") {
 							throw new Error("handler crash");
 						}
 						yield* connection.send(message.data);
@@ -251,7 +261,7 @@ describe("ws-effection", () => {
 			yield* survivor.send("still-alive");
 			const reply = yield* subscription.next();
 			A(!reply.done, "server closed the survivor's connection");
-			expect(String(reply.value.data)).toBe("still-alive");
+			expect(text(reply.value.data)).toBe("still-alive");
 		});
 	});
 
@@ -289,7 +299,7 @@ describe("ws-effection", () => {
 				yield* spawn(() =>
 					serve(server, function* (connection) {
 						for (const message of yield* each(connection)) {
-							if (String(message.data) === "boom") {
+							if (text(message.data) === "boom") {
 								throw new Error("handler crash");
 							}
 							yield* connection.send(message.data);
@@ -308,7 +318,7 @@ describe("ws-effection", () => {
 				yield* survivor.send("still-alive");
 				const reply = yield* subscription.next();
 				A(!reply.done, "server closed the survivor's connection");
-				expect(String(reply.value.data)).toBe("still-alive");
+				expect(text(reply.value.data)).toBe("still-alive");
 			});
 			expect(console_error).toHaveBeenCalledWith(
 				"ws-effection: serve() on_error callback threw",

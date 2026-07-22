@@ -153,7 +153,7 @@ export function use_connection(socket, options = {}) {
                 throw error;
             });
             let vended = false;
-            const subscription = { next: messages.next };
+            const subscription = { next: () => messages.next() };
             yield* provide({
                 socket,
                 get ready_state() { return socket.readyState; },
@@ -406,7 +406,7 @@ export function use_web_socket_server(options) {
                 throw error;
             });
             let vended = false;
-            const subscription = { next: pending.next };
+            const subscription = { next: () => pending.next() };
             yield* provide({
                 socket_server: wss,
                 address: () => wss.address(),

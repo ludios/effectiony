@@ -2,6 +2,7 @@
 // Model-output: ChatGPT 5.5 Pro
 // Model-output: Claude Opus 4.8
 // Model-output: Claude Fable 5
+// Model-output: Claude Fable 5
 
 /**
  * Effection resources for NATS connections and JetStream helpers.
@@ -526,7 +527,7 @@ function to_consumer_update_config(config: Partial<ConsumerConfig>, existing_con
 		}
 	}
 	A(conflicts.length === 0, () => `consumer config sets creation-only properties that differ from the existing consumer; delete the consumer or match its config: ${conflicts.join(", ")}`);
-	return update_config as ConsumerUpdateConfig;
+	return update_config;
 }
 
 /**
@@ -768,12 +769,11 @@ function start_iterator_return(tracked_messages: TrackedConsumerMessages): Promi
 	if (tracked_messages.return_promise) {
 		return tracked_messages.return_promise;
 	}
-	const return_iterator = tracked_messages.iterator.return;
-	if (!return_iterator) {
+	if (!tracked_messages.iterator.return) {
 		return null;
 	}
 	tracked_messages.return_promise = Promise.resolve()
-		.then(() => return_iterator.call(tracked_messages.iterator))
+		.then(() => tracked_messages.iterator.return?.())
 		.then(() => undefined);
 	return tracked_messages.return_promise;
 }
@@ -861,7 +861,7 @@ function create_consumer_messages_subscription(
 					(result) => {
 						settled = true;
 						if (active) {
-							resolve(result as IteratorResult<JsMsg, void>);
+							resolve(result);
 						}
 					},
 					(thrown_value) => {

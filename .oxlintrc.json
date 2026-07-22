@@ -32,7 +32,25 @@
 		{ "name": "@logtape", "specifier": "@logtape/lint/eslint" }
 	],
 
+	"overrides": [
+		{
+			"files": ["dev/**"],
+			"rules": {
+				// Demo scripts talk to the human on stdout; that's their job.
+				"no-console": "off"
+			}
+		}
+	],
+
 	"rules": {
+		// https://typescript-eslint.io/rules/no-floating-promises/
+		// effection `spawn` Tasks are owned by the surrounding scope, which
+		// awaits them and receives their errors.
+		"typescript/no-floating-promises": ["error", {
+			"allowForKnownSafePromises": [
+				{ "from": "package", "name": "Task", "package": "effection" }
+			]
+		}],
 		"import/no-cycle": ["error", { "maxDepth": 8 }],
 		"no-console": ["warn", { "allow": ["warn", "error"] }],
 		"no-debugger": "error",
@@ -59,6 +77,10 @@
 		// https://oxc.rs/docs/guide/usage/linter/rules/vitest/require-mock-type-parameters.html
 		// We might want to enable this in the future if we fix everything.
 		"vitest/require-mock-type-parameters": "off",
+		// https://typescript-eslint.io/rules/no-unsafe-type-assertion/
+		// We cast deliberately at I/O boundaries (NATS payloads, ws frames),
+		// in the WeakMap-backed opaque-handle pattern, and for test stubs.
+		"typescript/no-unsafe-type-assertion": "off",
 		"@logtape/prefer-lazy-evaluation": "warn",
 		"@logtape/no-unawaited-log": "error",
 		"@logtape/require-meta-sink": "warn",

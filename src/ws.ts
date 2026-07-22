@@ -234,7 +234,7 @@ export function on_emitter<T extends unknown[] = unknown[]>(
 	event: string,
 ): Stream<T, never> {
 	return resource(function* (provide) {
-		const signal   = createSignal<T, never>();
+		const signal   = createSignal<T>();
 		const listener = (...args: unknown[]) => {
 			signal.send(args as T);
 		};
@@ -261,7 +261,7 @@ export function once_emitter<T extends unknown[] = unknown[]>(
 	return scoped(function* () {
 		const subscription = yield* on_emitter<T>(emitter, event);
 		const next         = yield* subscription.next();
-		return next.value as T;
+		return next.value;
 	});
 }
 
@@ -347,7 +347,7 @@ export function use_connection(
 				throw error;
 			});
 			let vended = false;
-			const subscription: Subscription<WsMessage, WsClose> = { next: messages.next };
+			const subscription: Subscription<WsMessage, WsClose> = { next: () => messages.next() };
 			yield* provide({
 				socket,
 				get ready_state()     { return socket.readyState; },
@@ -622,7 +622,7 @@ export function use_web_socket_server(
 				throw error;
 			});
 			let vended = false;
-			const subscription: Subscription<WsConnectionRequest, never> = { next: pending.next };
+			const subscription: Subscription<WsConnectionRequest, never> = { next: () => pending.next() };
 			yield* provide({
 				socket_server: wss,
 				address: () => wss.address(),
