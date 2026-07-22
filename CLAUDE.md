@@ -90,6 +90,28 @@ At the workspace root:
 	pnpm check # runs tsc
 	pnpm test  # runs vitest
 
+Then automatically commit your changes with this commit template:
+
+	subsystem: short one-line description; semicolon if multiple changes
+
+	Model-output: model name e.g. Claude Fable 5
+
+	<prompt>
+
+	user prompt, verbatim
+
+	AskUserQuestion question-answers, if any
+
+	</prompt>
+
+	<slop>
+
+	model's response at the end of the dialogue, verbatim, in markdown format
+
+	</slop>
+
+"(mid-turn)" if I added something mid-turn; multiple <prompt></prompt> <slop></slop> ... if the conversation had several real turns.
+
 # Thank you for your hard work on this project
 
 <3
