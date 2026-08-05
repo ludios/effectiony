@@ -22,19 +22,19 @@
 		"@nats-io/jetstream": "^3.4.0",
 		"@nats-io/transport-node": "^3.4.0",
 		"ayy": "^4.1.0",
-		"effection": "^4.0.3",
-		"ws": "^8.21.0"
+		"effection": "^4.1.0",
+		"ws": "^8.21.2"
 	},
 	"devDependencies": {
-		"@logtape/lint": "^2.2.3",
-		"@logtape/logtape": "^2.2.3",
-		"@types/node": "^26.1.0",
+		"@logtape/lint": "^2.3.0",
+		"@logtape/logtape": "^2.3.0",
+		"@types/node": "^26.1.2",
 		"@types/ws": "^8.18.1",
-		"@vitest/coverage-v8": "^4.1.9",
-		"fast-check": "^4.8.0",
-		"oxlint": "^1.72.0",
+		"@vitest/coverage-v8": "^4.1.10",
+		"fast-check": "^4.9.0",
+		"oxlint": "^1.77.0",
 		"oxlint-tsgolint": "^7.0.2001",
 		"typescript": "^6.0.3",
-		"vitest": "^4.1.9"
+		"vitest": "^4.1.10"
 	}
 }
