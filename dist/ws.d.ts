@@ -114,6 +114,17 @@ export interface WsServer extends Stream<WsConnectionRequest, never> {
      * `noServer` mode — there is no address to report there.
      */
     address(): AddressInfo | string | null;
+    /**
+     * Close every still-OPEN tracked client with the server's
+     * `shutdown_code`/`shutdown_reason`; sockets already closing are left
+     * alone, so whoever closed first decides the code the peer sees.
+     * Synchronous and idempotent. {@link serve} calls this as it unwinds; a
+     * manual accept loop should do the same in a `finally` so whole-server
+     * shutdown reaches clients as `shutdown_code` rather than as each
+     * connection's `close_code` (see {@link use_web_socket_server} for why
+     * teardown order alone cannot deliver it).
+     */
+    close_clients(): void;
 }
 /**
  * Options for {@link use_web_socket_server}: everything `ws` accepts (except
@@ -250,7 +261,11 @@ export declare function forward<T>(source: Stream<T, unknown>, connection: WsCon
  *
  * A handler error closes that client and invokes `on_error`; it does not
  * bring the server down. The handler returning closes its client with the
- * connection's `close_code`.
+ * connection's `close_code`. When `serve` itself unwinds (whole-server
+ * shutdown, or its own task halted), it first closes every still-open client
+ * with the server's shutdown code via {@link WsServer.close_clients}; each
+ * connection resource then finds its socket already closing and simply
+ * awaits the handshake.
  *
  * @param server - the accept stream from {@link use_web_socket_server}
  * @param handler - per-client operation; when it returns, the client is closed
@@ -267,10 +282,17 @@ export declare function serve(server: WsServer, handler: (connection: WsConnecti
  * exit: stops accepting, closes every still-open client (handled or not)
  * with `shutdown_code`/`shutdown_reason`, waits up to `shutdown_timeout` for
  * the close handshakes, terminates stragglers, and waits for the server's own
- * `close` event. (Effection v4 destroys children in creation order, so on
- * whole-server shutdown this resource unwinds before connection-handler
- * tasks; clients therefore see `shutdown_code`, while a handler that exits
- * individually closes its own client with the connection's `close_code`.)
+ * `close` event.
+ *
+ * Effection (>= 4.1) destroys children in reverse creation order, so on
+ * whole-server shutdown connection-handler tasks unwind before this resource
+ * does — too late for the close sweep here to decide what those clients see.
+ * {@link WsServer.close_clients} exists for that: {@link serve} calls it as
+ * it unwinds (a body's finally runs before any child task is destroyed), so
+ * clients see `shutdown_code`, while a handler that exits individually still
+ * closes its own client with the connection's `close_code`. A manual accept
+ * loop that wants the same shutdown semantics must call `close_clients()` in
+ * its own `finally`.
  *
  * Note: when you pass an external `server`/`noServer`, `ws` never closes your
  * HTTP server — own it as its own resource ordered before this one.

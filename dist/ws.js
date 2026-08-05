@@ -310,7 +310,11 @@ export function forward(source, connection, options = {}) {
  *
  * A handler error closes that client and invokes `on_error`; it does not
  * bring the server down. The handler returning closes its client with the
- * connection's `close_code`.
+ * connection's `close_code`. When `serve` itself unwinds (whole-server
+ * shutdown, or its own task halted), it first closes every still-open client
+ * with the server's shutdown code via {@link WsServer.close_clients}; each
+ * connection resource then finds its socket already closing and simply
+ * awaits the handshake.
  *
  * @param server - the accept stream from {@link use_web_socket_server}
  * @param handler - per-client operation; when it returns, the client is closed
@@ -321,28 +325,41 @@ export function serve(server, handler, options = {}) {
     const { connection: connection_options, on_error = () => { } } = options;
     return call(function* () {
         const accept = yield* server;
-        for (;;) {
-            const { value: { socket, request } } = yield* accept.next();
-            const claimed = withResolvers("socket claimed");
-            yield* spawn(function* () {
-                try {
-                    const connection = yield* use_connection(socket, connection_options);
-                    claimed.resolve();
-                    yield* handler(connection, request);
-                }
-                catch (error) {
+        try {
+            for (;;) {
+                const { value: { socket, request } } = yield* accept.next();
+                const claimed = withResolvers("socket claimed");
+                yield* spawn(function* () {
                     try {
-                        on_error(error, request);
+                        const connection = yield* use_connection(socket, connection_options);
+                        claimed.resolve();
+                        yield* handler(connection, request);
                     }
-                    catch (observer_error) {
-                        console.error("ws-effection: serve() on_error callback threw", observer_error);
+                    catch (error) {
+                        try {
+                            on_error(error, request);
+                        }
+                        catch (observer_error) {
+                            console.error("ws-effection: serve() on_error callback threw", observer_error);
+                        }
                     }
-                }
-                finally {
-                    claimed.resolve(); // idempotent; unblocks the accept loop on instant failure
-                }
-            });
-            yield* claimed.operation;
+                    finally {
+                        claimed.resolve(); // idempotent; unblocks the accept loop on instant failure
+                    }
+                });
+                yield* claimed.operation;
+            }
+        }
+        finally {
+            // Effection (>= 4.1) destroys scope children in reverse creation
+            // order, so on whole-server shutdown the per-connection tasks unwind
+            // before the server resource — each would close its socket with the
+            // connection's `close_code` before the server could speak. An
+            // unwinding body runs its finally blocks before any child task is
+            // destroyed, so this is the earliest hook: close everyone with the
+            // server's shutdown code, and the connection teardowns that follow
+            // find their sockets already closing and just await the handshake.
+            server.close_clients();
         }
     });
 }
@@ -355,10 +372,17 @@ export function serve(server, handler, options = {}) {
  * exit: stops accepting, closes every still-open client (handled or not)
  * with `shutdown_code`/`shutdown_reason`, waits up to `shutdown_timeout` for
  * the close handshakes, terminates stragglers, and waits for the server's own
- * `close` event. (Effection v4 destroys children in creation order, so on
- * whole-server shutdown this resource unwinds before connection-handler
- * tasks; clients therefore see `shutdown_code`, while a handler that exits
- * individually closes its own client with the connection's `close_code`.)
+ * `close` event.
+ *
+ * Effection (>= 4.1) destroys children in reverse creation order, so on
+ * whole-server shutdown connection-handler tasks unwind before this resource
+ * does — too late for the close sweep here to decide what those clients see.
+ * {@link WsServer.close_clients} exists for that: {@link serve} calls it as
+ * it unwinds (a body's finally runs before any child task is destroyed), so
+ * clients see `shutdown_code`, while a handler that exits individually still
+ * closes its own client with the connection's `close_code`. A manual accept
+ * loop that wants the same shutdown semantics must call `close_clients()` in
+ * its own `finally`.
  *
  * Note: when you pass an external `server`/`noServer`, `ws` never closes your
  * HTTP server — own it as its own resource ordered before this one.
@@ -388,6 +412,13 @@ export function use_web_socket_server(options) {
         const on_wss_close = () => {
             wss_closed.resolve();
         };
+        const close_clients = () => {
+            for (const socket of wss.clients) {
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.close(shutdown_code, shutdown_reason);
+                }
+            }
+        };
         wss.on("error", ignore_error);
         wss.on("connection", on_connection);
         wss.on("close", on_wss_close);
@@ -410,6 +441,7 @@ export function use_web_socket_server(options) {
             yield* provide({
                 socket_server: wss,
                 address: () => wss.address(),
+                close_clients,
                 // oxlint-disable-next-line require-yield -- effection Stream contract: a generator Operation that completes immediately with the subscription
                 *[Symbol.iterator]() {
                     assert(!vended, "a WsServer carries one buffered accept queue and supports a single accept loop");
@@ -428,19 +460,15 @@ export function use_web_socket_server(options) {
                 // listener detaches, and `ws` aborts (503) any upgrade that
                 // completes after close() flips its state to CLOSING.
                 wss.off("connection", on_connection);
-                // Effection v4 destroys children in creation order, so this
-                // resource usually unwinds BEFORE sibling tasks that own the
-                // accepted connections. Whole-server shutdown therefore closes
-                // every still-open client here with `shutdown_code`; the
-                // per-connection close code applies when an individual handler
-                // exits while the server lives on. `wss.clients` covers vended
-                // and not-yet-vended sockets alike (hence the constructor-time
-                // requirement that client tracking stays on).
-                for (const socket of wss.clients) {
-                    if (socket.readyState === WebSocket.OPEN) {
-                        socket.close(shutdown_code, shutdown_reason);
-                    }
-                }
+                // By now sibling connection tasks have already unwound (children
+                // are destroyed in reverse creation order), so vended sockets are
+                // usually closing — with `shutdown_code` when serve()'s unwind
+                // called close_clients() first. This sweep still matters for
+                // sockets accepted but never vended to a connection task, and for
+                // manual accept loops that skipped close_clients(). `wss.clients`
+                // covers vended and not-yet-vended sockets alike (hence the
+                // constructor-time requirement that client tracking stays on).
+                close_clients();
                 wss.close();
                 yield* race([
                     wss_closed.operation,

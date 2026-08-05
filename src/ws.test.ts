@@ -163,25 +163,23 @@ describe("ws-effection", () => {
 			const port_box     = withResolvers<number>("server port");
 			const first_close  = withResolvers<WsClose>("first client closed");
 			const second_close = withResolvers<WsClose>("second client closed");
-			// The scoped block is load-bearing: it holds the server resource and
-			// serve()'s per-connection tasks in one scope that halt() destroys in
-			// creation order (server first, so clients see 1001). Halting a bare
-			// task body unwinds serve() first, closing the still-served client
-			// with the connection's own code 1000 instead.
-			const server_task  = yield* spawn(() =>
-				scoped(function* () {
-					const server = yield* use_web_socket_server({ port: 0 });
-					port_box.resolve(port_of(server));
-					yield* serve(server, function* (connection) {
-						const subscription = yield* connection;
-						let next = yield* subscription.next();
-						while (!next.done && text(next.value.data) !== "bye") {
-							next = yield* subscription.next();
-						}
-						// handler returns; the connection resource closes this client
-					});
-				}),
-			);
+			// Shutdown-code delivery must not depend on scope teardown order
+			// (effection >= 4.1 destroys children in reverse creation order, so
+			// connection tasks unwind before the server resource): serve() closes
+			// still-open clients with the server's shutdown code as it unwinds,
+			// which is why a bare task body suffices here.
+			const server_task  = yield* spawn(function* () {
+				const server = yield* use_web_socket_server({ port: 0 });
+				port_box.resolve(port_of(server));
+				yield* serve(server, function* (connection) {
+					const subscription = yield* connection;
+					let next = yield* subscription.next();
+					while (!next.done && text(next.value.data) !== "bye") {
+						next = yield* subscription.next();
+					}
+					// handler returns; the connection resource closes this client
+				});
+			});
 			const port = yield* port_box.operation;
 			yield* spawn(function* () {
 				const client = yield* use_client(port);
