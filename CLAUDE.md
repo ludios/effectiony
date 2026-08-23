@@ -112,6 +112,31 @@ Then automatically commit your changes with this commit template:
 
 "(mid-turn)" if I added something mid-turn; multiple <prompt></prompt> <slop></slop> ... if the conversation had several real turns.
 
+# Codex code review after each commit
+
+After each commit you make, get it reviewed by Codex (GPT-5.6-Sol at xhigh reasoning):
+
+	codex review --commit <sha> -c model="gpt-5.6-sol" -c model_reasoning_effort="xhigh"
+
+Notes:
+
+- Codex is configured globally in `~/.codex/config.toml` (`approval_policy = "never"`,
+  `sandbox_mode = "danger-full-access"`) to never ask for permission and run unsandboxed, so
+  reviews and `codex exec` runs never block on prompts. If codex ever stalls waiting for
+  approval, check that file.
+- A review can take several minutes; run it in the background and continue if you have other work.
+- Sol often nitpicks, or cares about bizarre, irrelevant edge cases. Ignore those findings;
+  they should not stop you from making progress.
+- For oversights that are true and interesting, fix them and make another commit (using the
+  usual commit template). If you fixed nothing, say briefly in your reply why the findings
+  didn't warrant changes.
+- Do NOT send that follow-up fix commit through another Codex review — the review cycle for
+  a change ends after one round of findings and fixes. (Exception: the follow-up grew into
+  something substantial beyond addressing the findings.)
+- If you made several commits in a row, make sure the reviews cover all of them: either review
+  each commit, or run one ranged review of the whole batch with
+  `codex review --base <sha before your first commit>` plus the same `-c` options.
+
 # Thank you for your hard work on this project
 
 <3
