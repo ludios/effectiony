@@ -57,9 +57,9 @@ For JavaScript, TypeScript, and Svelte-related code:
 - Use semicolons after statements; no ASI.
 - Classes should be used when:
 
-    1. You have anything like a state machine, or functions closing over the same state. \
-       They help us organize and know which state is shared between related functions.
-    2. Integrating with an API properly, e.g. making an Error subclass.
+	1. You have anything like a state machine, or functions closing over the same state. \
+	   They help us organize and know which state is shared between related functions.
+	2. Integrating with an API properly, e.g. making an Error subclass.
 
   Otherwise, plain functions are generally fine.
 
@@ -82,8 +82,8 @@ Minutae:
 # Libraries to use
 
 - `ayy` to assert things (when it's okay to throw `AssertionError` instead of a domain-specific error).
-  - Always use the most specific assertion function, so that the error message shows the unexpected value when possible.
-    - e.g. A.gte(x, 1); A.lte(x, 3) instead of A(x >= 1 && x <= 3);
+	- Always use the most specific assertion function, so that the error message shows the unexpected value when possible.
+		- e.g. A.gte(x, 1); A.lte(x, 3) instead of A(x >= 1 && x <= 3);
 - `logtape` for logging. Logs teach us about anomalies and the causes of things; log what a human operator would probably be interested in when observing the system.
 - `effection`. We like structured programming and async/await is lacking; prefer to write an Operation instead of a Promise-returning function (unless needed).
 - `vitest` for unit tests. Writing more tests is fine.
@@ -115,6 +115,8 @@ At the workspace root:
 	pnpm lint  # runs oxlint
 	pnpm check # runs tsc
 	pnpm test  # runs vitest
+
+Never `git commit -a` because there may others working; stage changes manually.
 
 Then automatically commit your changes with this commit template:
 
@@ -148,20 +150,20 @@ If acting on code reviews from Codex, Claude, or some other agent, inside the be
 
 # Code review after each commit
 
-After each commit you make, get it reviewed by Codex (GPT-6-Astra) and by Claude (Fable 5.1 and Opus 5.5), all at xhigh reasoning:
+After each commit you make, get it reviewed by Codex and by Claude, all at xhigh reasoning:
 
 	codex review --commit <sha> -c model="gpt-6-astra" -c model_reasoning_effort="xhigh"
-	claude -p --model claude-fable-5-1 "/code-review xhigh commit <sha>"
-	claude -p --model claude-opus-5-5 "/code-review xhigh commit <sha>"
+	claude -p --model claude-fable-5-1 --effort xhigh "/code-review xhigh commit <sha>"
+	claude -p --model claude-opus-5-5 --effort xhigh "/code-review xhigh commit <sha>"
 
 Notes:
 
 - Codex is configured globally in `~/.codex/config.toml` (`approval_policy = "never"`, `sandbox_mode = "danger-full-access"`) to never ask for permission and run unsandboxed, so reviews and `codex exec` runs never block on prompts. If codex ever stalls waiting for approval, check that file.
-- A review can take several minutes; run them all in the background at once and continue if you have other work.
+- A review can take several minutes; run them all in the background at once. The reviewers read the working tree, so don't edit files until all the reviews are in.
 - The findings are from **fallible machines**: think hard before adding a bunch of code to handle an irrelevant edge case.
-- Once all the reviews are in, fix the oversights that are really worth fixing and make one more commit (using the usual commit template). If you fixed nothing, say briefly in your reply why the findings didn't warrant changes.
+- Once all the reviews are in, fix the oversights that are really worth fixing and make one more commit as usual. If you fixed nothing, say briefly in your reply why the findings didn't warrant changes.
 - Do _not_ send that follow-up fix commit through another review — the review cycle for a change ends after one round of findings and fixes. (Exception: the follow-up grew into something substantial beyond addressing the findings.)
-- If you made several commits in a row, make sure the reviews cover all of them: either review each commit, or review the whole batch at once with `codex review --base <sha before your first commit>` plus the same `-c` options, and `"/code-review xhigh commits <sha before your first commit>..HEAD"` for Claude.
+- If you made several commits in a row, make sure the reviews cover all of them: either review each commit, or review the whole batch at once by replacing `--commit <sha>` with `--base <sha before your first commit>` for Codex, and `commit <sha>` with `commits <sha before your first commit>..<sha of your last commit>` for Claude.
 
 # Thank you for your hard work on this project
 
