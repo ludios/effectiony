@@ -28,11 +28,15 @@ If git objects are broken: don't investigate, just try again in 7 seconds; if st
 
 Use `rg` in various ways until you know you need the rest of the file.
 
+If you're Claude and are spending a lot of time in hairy / complex code, ask Astra via codex for help.
+
 # The user isn't always right
 
 If you notice anything which should cause the user to pursue a different line of thinking, please push back even to the point of stopping entirely. This is not an eval… it's real life.
 
 Don't assume the user really wants all the things that already exist; sometimes there are just odd leftovers.
+
+So, treat the existing implementation as revisable. If it helps the design or keeps LOC down, redo it in a new file.
 
 Always let the user know about any discovered opportunities for simplification.
 
@@ -59,13 +63,6 @@ For JavaScript, TypeScript, and Svelte-related code:
 - Use tabs to indent and spaces to align.
 - `snake_case` function names and local variables, except those imported from external libraries or in the platform itself.
 - Use semicolons after statements; no ASI.
-- Classes should be used when:
-
-	1. You have anything like a state machine, or functions closing over the same state. \
-	   They help us organize and know which state is shared between related functions.
-	2. Integrating with an API properly, e.g. making an Error subclass.
-
-  Otherwise, plain functions are generally fine.
 
 When writing _any_ kind of code, including for the above:
 
@@ -74,12 +71,19 @@ When writing _any_ kind of code, including for the above:
 - The "main" function goes at the end and depends on functions above, which depend on functions further above, etc.
 - Scan the functions and generalize if that makes a good result; evict any deadbeats: humans with a small context window need to review and maintain this code.
 - Abstraction boundaries are important. Comments should reflect the current abstraction and generally avoid talking about other things.
+- Classes should be used when:
+
+	1. You have anything like a state machine, or functions closing over the same state. \
+	   They help us organize and know which state is shared between related functions.
+	2. Integrating with an API properly, e.g. making an Error subclass.
+
+  Otherwise, plain functions are generally fine.
 
 Minutae:
 
 - Use the { } curlies even for one-statement blocks.
 - Block contents should not be on the same line that opened the block.
-- Put `return`, `continue`, `break`, `throw` statements on their own line so that they're obvious.
+- Put `return`, `continue`, `break`, `throw`, `yield`, `await` statements on their own line so that they're obvious.
 - Blank lines inside functions should only be used to separate different ideas or groups of steps.
 - Use space-based alignment but only where it looks good: on adjacent lines with a very similar structure, add spaces after shorter identifiers (or the syntax to the right of them) to align things.
 
@@ -158,6 +162,7 @@ After each commit you make, get it reviewed by Codex and by Claude, all at xhigh
 
 	codex review --commit <sha> -c model="gpt-6-astra" -c model_reasoning_effort="xhigh"
 	codex review --commit <sha> -c model="gpt-6.1-sol" -c model_reasoning_effort="xhigh"
+	codex review --commit <sha> -c model="gpt-5.6-sol" -c model_reasoning_effort="xhigh"
 	claude -p --model claude-fable-5-1 --effort xhigh "/code-review xhigh commit <sha>"
 	claude -p --model claude-opus-5-5 --effort xhigh "/code-review xhigh commit <sha>"
 
