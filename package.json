@@ -11,8 +11,8 @@
 	},
 	"scripts": {
 		"test": "vitest run",
-		"build": "./node_modules/.bin/tsc",
-		"check": "tsc -p tsconfig.json",
+		"build": "tsc -p tsconfig.build.json",
+		"check": "tsc -p tsconfig.build.json && tsc -p tsconfig.json --noEmit",
 		"lint": "oxlint",
 		"lint:fix": "oxlint --fix"
 	},
