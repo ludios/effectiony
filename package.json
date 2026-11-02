@@ -21,7 +21,7 @@
 		"@effectionx/timebox": "^0.4.3",
 		"@nats-io/jetstream": "^3.4.0",
 		"@nats-io/transport-node": "^3.4.0",
-		"ayy": "^4.1.0",
+		"ayy": "^5.0.1",
 		"effection": "^4.2.0",
 		"ws": "^8.22.1"
 	},

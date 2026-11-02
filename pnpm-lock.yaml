@@ -18,8 +18,8 @@ importers:
         specifier: ^3.4.0
         version: 3.4.0
       ayy:
-        specifier: ^4.1.0
-        version: 4.1.0
+        specifier: ^5.0.1
+        version: 5.0.1
       effection:
         specifier: ^4.2.0
         version: 4.2.0
@@ -115,6 +115,10 @@ packages:
 
   '@logtape/logtape@2.4.2':
     resolution: {integrity: sha512-YJyC1gEMgWmTqJTRtKkjgasEbi8/0gP7Dj8n6bL46gQIAhpTY8uXJ+1QYMOgF5asotlGMvy3G7ejXUe45Yd1MQ==}
+
+  '@ludios/node-inspect-extracted@3.3.4':
+    resolution: {integrity: sha512-pRn7EVjC1UAZ0MzE0WEk6lhoQOsXtVPfwPJcZYTjaXr/QTW/9uLA0QkL5H4kCeKpujx3xwJnCHUZBiZRl38NaA==}
+    engines: {node: '>=14'}
 
   '@napi-rs/wasm-runtime@1.1.6':
     resolution: {integrity: sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg==}
@@ -459,9 +463,9 @@ packages:
   ast-v8-to-istanbul@1.0.7:
     resolution: {integrity: sha512-kFL68AG6ajd8fg248zwM9GQrUWEp79gsmjum34OEXjs4yHuUMZfYKwOLW9GMmB4oNvVrj+EAGxsP7ye2UR9UlA==}
 
-  ayy@4.1.0:
-    resolution: {integrity: sha512-SKSsZh415xVJGMWYSeL/x1LskHJV87+ywuTRDMr40gSGL0wi/qqeJmolwqgqyN61MMSH3CkcfwQ7UF9CVOzrjg==}
-    engines: {node: '>= 14'}
+  ayy@5.0.1:
+    resolution: {integrity: sha512-8HHuPzhcbrRgzCYTDG8qagW/dhV6dJaBqP5d/BwyvMNRAgQFB5g0vOTSXAK1b1W4sPjGG0VgEbwkMbbzPtWjjA==}
+    engines: {node: '>= 14.13.1'}
 
   chai@6.3.0:
     resolution: {integrity: sha512-XWAtwJ6OHO+tj0EKCs0Y2UamnyOxseZWltU4x2U2wh8g4AigdjwvtUjvLP2tqkA/avxHEtzxNaqGq/YGNwckKg==}
@@ -862,6 +866,8 @@ snapshots:
 
   '@logtape/logtape@2.4.2': {}
 
+  '@ludios/node-inspect-extracted@3.3.4': {}
+
   '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
     dependencies:
       '@emnapi/core': 1.11.1
@@ -1105,7 +1111,9 @@ snapshots:
       estree-walker: 3.0.3
       js-tokens: 10.0.0
 
-  ayy@4.1.0: {}
+  ayy@5.0.1:
+    dependencies:
+      '@ludios/node-inspect-extracted': 3.3.4
 
   chai@6.3.0: {}
 
