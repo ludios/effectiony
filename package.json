@@ -32,8 +32,8 @@
 		"@types/ws": "^8.18.2",
 		"@vitest/coverage-v8": "^4.1.11",
 		"fast-check": "^4.10.2",
-		"oxlint": "^1.87.0",
-		"oxlint-tsgolint": "^7.0.2003",
+		"oxlint": "^1.90.0",
+		"oxlint-tsgolint": "^7.0.2005",
 		"typescript": "^6.0.3",
 		"vitest": "^4.1.11"
 	}
