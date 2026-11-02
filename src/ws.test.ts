@@ -1,5 +1,3 @@
-// Model-output: Claude Fable 5
-
 /**
  * End-to-end tests of ws-effection against real sockets on 127.0.0.1.
  */

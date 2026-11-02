@@ -1,5 +1,3 @@
-// Model-output: Claude Opus 4.8
-
 import { describe, expect, expectTypeOf, test } from "vitest";
 import { createQueue, createSignal, each, resource, run, sleep, spawn } from "effection";
 import type { Operation, Stream, Subscription } from "effection";

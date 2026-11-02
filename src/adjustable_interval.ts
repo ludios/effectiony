@@ -1,5 +1,3 @@
-// Model-output: Claude Opus 4.8
-//
 // effection ships an `interval(ms)` stream, but its rate is fixed for the life
 // of the stream. This is the same idea with a knob: a stream of evenly-spaced
 // ticks whose spacing you can change on the fly, so you can speed it up or slow

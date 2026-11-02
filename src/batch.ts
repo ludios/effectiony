@@ -1,5 +1,3 @@
-// Model-output: Claude Opus 4.8
-//
 // A replacement for @effectionx/stream-helpers' `batch`, which is unsuitable for
 // a source that is idle most of the time: it applies the maxTime deadline to the
 // FIRST item of a batch, so once a source goes quiet for one window it halts its

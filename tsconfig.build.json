@@ -1,4 +1,3 @@
-// Model-output: Claude Opus 5.5
 // The config for emitting dist/: tsconfig.json without the tests.
 {
 	"$schema": "https://json.schemastore.org/tsconfig",

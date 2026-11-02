@@ -1,6 +1,4 @@
-// Model-output: Claude Opus 4.8
 // with with some code review from
-// Model-output: ChatGPT 5.5 Thinking
 import { createQueue, resource, spawn } from "effection";
 /**
  * Drain one source into the shared queue, tagging every value with its key,

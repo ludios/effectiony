@@ -1,4 +1,3 @@
-// Model-output: Claude Fable 5
 /**
  * ws-effection — structured-concurrency bindings for the `ws` library
  * (https://github.com/websockets/ws) on top of Effection v4.

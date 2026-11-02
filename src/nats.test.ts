@@ -1,5 +1,3 @@
-// Model-output: Claude Fable 5
-
 /**
  * Integration tests for the Effection NATS resources, run against a real
  * `nats-server` with JetStream enabled, started on a random port with a
